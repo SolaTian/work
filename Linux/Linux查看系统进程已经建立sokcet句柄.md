@@ -6,7 +6,7 @@
 
     cd /proc/pid/
 
-其中`pid`表示的就是通过`top`或者`ps -T`查看道德进程`PID`
+其中`pid`表示的就是通过`top`或者`ps -T`查看到的进程`PID`
 
 之后
 
