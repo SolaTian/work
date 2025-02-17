@@ -125,7 +125,29 @@ Partition 全局的第一个 Segment 从0开始，后续每个 Segment 文件名
 
 每条消息都被包装成上图这个结构，只有最后一个字段才是真正生产者发送的消息数据。
 
-####  1.2.4、同步发送和异步发送
+#### 1.2.4、Kafka 分区副本
+
+![](https://ask.qcloudimg.com/http-save/2039230/x8v603d95o.png)
+
+
+> 副本 Replica：控制消息保存在几个 broker 上，一般情况下副本数小于等于 broker 的个数。
+
+副本操作是以分区 Partition 为单位的。每个分区都有各自的 1 个主副本 Leader 和 N 个从副本 Follower；
+
+以下是分区副本的概念
+1. AR：分区中所有副本统称为AR(Assigned Replicas)；
+2. ISR：所有与 Leader 副本保持一定程度同步的副本（包括 leader 副本）组成 ISR (In-Sync Replicas)，即当前可用的副本。
+3. 与 Leader 副本同步之后过多的副本（不包括 Leader 副本）组成 OSR(Out-of-Sync Replicas)。 AR=ISR+OSR ，正常情况下 AR=ISR。
+
+Follower 通过拉的方式从 Leader 同步数据。
+
+注意：
+- 消费者和生产者都是从 Leader 读写数据，不与 Follower 交互。
+- 同一个副本不能放在同一个 Broker 中。
+
+
+
+####  1.2.5、同步发送和异步发送
 
 生产者给 Kafka 发送数据，可以采用同步方式或者异步方式。
 
@@ -161,7 +183,7 @@ Partition 全局的第一个 Segment 从0开始，后续每个 Segment 文件名
 - 日志收集与处理：在大型系统中，日志的收集和处理是一个重要的任务。由于系统可能产生大量的日志数据，如果直接将这些数据推送到处理系统，可能会导致处理系统无法承受。通过Kafka进行削峰处理，可以将日志数据暂存到`Kafka`中，然后逐步推送给处理系统进行处理。
 
 
-## 2、Kafka原理
+## 2、Kafka 原理
 
 要真正吃透`Kafka`的底层原理很不容易。这里也只是大概的介绍一下`Kafka`的大致工作原理。
 
@@ -171,13 +193,13 @@ Partition 全局的第一个 Segment 从0开始，后续每个 Segment 文件名
 ![Kafka基础架构](https://img2022.cnblogs.com/blog/2591061/202211/2591061-20221113155143571-1630948393.png)
 
 
-### 2.1、Kafka的管理和支持——Zookeeper
+### 2.1、Kafka 的管理和支持——Zookeeper
 
 `Zookeeper`是一个分布式协调服务。`Kafka`是使用的`Zookeeper`来构建的分布式服务。
 其主要负责的功能包括：
 1. 元数据管理：`Zookeeper`存储和管理`Kafka`集群的元数据，包括：`Topic`，`Partition`，`offset`以及`Replica`；
-2. 集群管理：当`Kafka`中有新的`Broker`加入或者离开时，`Zookeeper`负责通知和协调集群中的其他`Broker`，保持集群的一致性；
-3. `Leader`选举：`Kafka`通过`Zookeeper`实现分区的`Leader`选举。
+2. 集群管理：管理`Broker`的注册信息，当`Kafka`中有新的`Broker`加入或者离开时，`Zookeeper`负责通知和协调集群中的其他`Broker`，保持集群的一致性；
+3. `Controller`选举：`Kafka`通过`Zookeeper`实现`Controller`选举，`Controller`将动态决策结果（如新 Leader、ISR 变更）写入`Zookeeper`，其他`Broker`通过监听`Zookeeper`节点变化（`Watcher`机制）同步最新元数据。
 
 
 在`Kafka`中，`Zookeeper`以服务器的形式存在。但需要注意的是，这里的“服务器”并不是指它直接提供`Kafka`消息队列服务，而是指`Zookeeper`作为一个独立的进程或服务运行在服务器上，用于为`Kafka`集群提供分布式协调服务。
@@ -187,15 +209,24 @@ Partition 全局的第一个 Segment 从0开始，后续每个 Segment 文件名
 `Zookeeper`和`Kafka`的关系好比是，管理者和打工仔的关系，`Zookeeper`负责全局的协调和管理，`Kafka`负责处理具体的事务，相互协调使得分布式系统稳定运行。
 
 
-### 2.2、Kafka结点的领导者——Controller
+### 2.2、Kafka 结点的领导者——Controller
 
-> Controller：是Kafka集群中的一个特殊的Broker，它除了像普通Broker那样对外提供消息的生产、消费、同步功能外，还额外承担了管理Kafka集群的Broker、Topic、分区等职责。
+> Controller：是 Kafka 集群中的一个特殊的 Broker，它除了像普通 Broker那样对外提供消息的生产、消费、同步功能外，还额外承担了管理 Kafka 集群的 Broker、Topic、分区等职责。
 
-#### 2.2.1、Controller的选举过程
+Controller 负责管理这些元数据，那么它与 Zookeeper 的元数据管理有什么区别？
+
+- Zookeeper：核心职责是可靠存储元数据和通知变更（通过 Watcher ）。它是被动的存储系统，不参与决策。
+- Controller：作为集群的“大脑”，主动管理状态（如故障恢复、副本均衡）和执行决策（如 Leader 选举），并将结果持久化到 Zookeeper。
+
+在后续新版的 Kafka 中，使用 KRaft 代替了 Zookeeper，实现了元数据管理的去中心化和性能优化。
+
+
+#### 2.2.1、Controller 的选举过程
 
 `Kafka`集群中的每一个`Broker`都有可能成为`Controller`，具体的选举依赖于`Zookeeper`。
 
 选举流程：
+
 1. 候选者注册：在`Kafka`集群启动时，每个`Broker`都有可能成为`Controller`的候选者。各候选者会在`Zookeeper`中创建临时有序节点（通常是`/controller`）来表明自己的参与。这些节点是临时的，意味着当`Broker`宕机或退出集群时，相应的节点会被自动删除；
 2. 节点的排序与选举：`Zookeeper`对候选者结点进行排序，具有最小序号的节点成为新的`Controller`，如果多个候选者具有相同的最小序号，那么`Zookeeper`会根据节点的创建时间来选择最终的`Controller`；
 3. 选举完成：一旦选举完成，新的`Controller`节点将被选出，并且其他候选者将知道哪个节点成为了新的`Controller`。新的`Controller`节点将负责管理`Kafka`集群的状态、执行分区分配、`Leader`选举等操作；
@@ -205,27 +236,23 @@ Partition 全局的第一个 Segment 从0开始，后续每个 Segment 文件名
 #### 2.2.2、Controller的职责
 
 1. 集群的状态管理：
-   1. 监控集群中`Broker`的增减变化，包括`Broker`的加入，主动关闭和宕机；
-   2. 分区与副本管理：`Controller`负责管理和监控集群中所有分区的状态，包括分区的创建、删除、状态转换以及副本的选举和状态更新。它通过`ZooKeeper`来协调这些任务，确保分区和副本的高可用性和一致性;
+   1. 监控集群中`Broker`的增减变化，包括处理`Broker`的加入，主动关闭和宕机，`Controller`需要及时更新集群元数据，并将集群变化通知到所有的 Broker 集群节点；
+   2. 分区与副本管理：`Controller`负责管理和监控集群中所有分区的状态，包括`Topic`分区的创建、删除、状态转换以及副本的选举和状态更新。它通过`ZooKeeper`来协调这些任务，确保分区和副本的高可用性和一致性;
 2. 元数据管理：`Controller`还负责维护集群的元数据信息，从`Zookeeper`中读取和更新集群的元数据信息，如`Topic`的分区信息、每个分区的`Leader`副本信息。当集群中的元数据发生变化时，`Controller`会及时更新集群元数据并将更新后的信息同步给集群中的所有`Broker`，确保每个`Broker`都能获取到最新的元数据信息；
 3. 故障切换与内容复制：当分区的`Leader`副本发生故障时，`Controller`负责进行故障切换，选举新的`Leader`副本，并确保数据的正确复制和同步；
 
 
 
+`Kafka`分区和副本数据采用状态机方式进行管理，分区和副本的变化都在状态机内会引起状态机状态的变更，从而触发相应的变化事件：
 
-
-> ISR列表：指与领导者副本保持同步的追随者副本集合，即这些副本已经复制了领导者副本的所有数据，并且它们的落后时间在一定范围内。
-
-`Kafka`分区和副本数据采用状态机方式进行管理：
-
-- 分区状态机：
+- 分区状态机（管理 Topic 的分区，它有以下 4 种状态）：
   - NonExistentPartition：该状态表示分区没有被创建过或创建后被删除了
   - NewPartition：分区刚创建后，处于这个状态。此状态下分区已经分配了副本，但是还没有选举`leader`，也没有`ISR`列表
   - OnlinePartition：一旦这个分区的`leader`被选举出来，将处于这个状态
   - OfflinePartition：当分区的`leader`宕机，转移到这个状态
 ![分区状态机的切换](https://s6.51cto.com/oss/202104/09/f4d16e834f83f10f4f2cb4b860da35e9.png)
 
-- 副本状态机：
+- 副本状态机（副本状态，管理分区副本信息，它也有 4 种状态）：
   - NewReplica: 创建`topic`和分区分配后创建`replicas`，此时，`replica`只能获取到成为`follower`状态变化请求。
   - OnlineReplica: 当`replica`成为`parition`的`assingned replicas`时，其状态变为 OnlineReplica, 即一个有效的OnlineReplica。
   - OfflineReplica: 当一个`replica`下线，进入此状态，这一般发生在`broker`宕机的情况下
