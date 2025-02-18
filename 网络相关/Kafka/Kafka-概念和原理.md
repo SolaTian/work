@@ -67,8 +67,8 @@ Kafka 由以下部分组成：
 |消费者组`Consumer Group`|消费者组由一个或者多个消费者组成|<li> 同一个组中的消费者对于同一条消息只消费一次；<li>每个消费者都属于某个消费者组，如果不指定，那么所有的消费者都属于默认的组；<li>组内的所有消费者协调在一起来消费一个订阅主题( topic)的所有分区(partition)。当然，每个分区只能由同一个消费组内的一个消费者(consumer)来消费，可以由不同的消费组来消费；<li>|
 |节点`Broker`|`Kafka`集群中的每个服务器节点被称为一个`Broker`，负责存储消息数据，并提供消息生产和消费的服务|`Broker`集群通过`Zookeeper`进行管理和协调，以实现高可用性和数据一致性|
 |主题`Topic`|`Topic`是`Kafka`中用于存储消息的逻辑分类，每个`Topic`都包含多个`partition`，用于分散消息的存储和消费。主题类似于数据库的表。|<li>生产者向`Topic`发送消息，消费者从`Topic`订阅并消费消息；<li>不同主题的消息是物理隔离的；<li>`Topic`有一个或者多个分区；<li>同一个主题的消息保存在一个或者多个`Broker`上，用户只需要指定`Topic`即可以生产或者消费，不必关心存于何处。|
-|分区`Partition`|`Partition`是`Topic`的物理分区，用于实现消息的并行处理和存储|每个`Partition`可以有多个副本（`Replica`）以提高数据的可靠性和可用性|
-|消息`message`|`Kafka`的数据单元称作消息|由字节数组成|
+|分区`Partition`|`Partition`是`Topic`的物理分区，对应一个磁盘上的文件，用于实现消息的并行处理和存储|每个`Partition`可以有多个副本（`Replica`）以提高数据的可靠性和可用性|
+|消息`message`|`Kafka`的数据单元称作消息，消息在文件中的位置称为`Offset`，`Offset`唯一标记一条`Message`|由字节数组成|
 |批次`batch`|批次就是一组消息|同属于一个`Broker`和`Partition`|
 |`Replica`|`Replica`是`Partition`的副本，用于实现数据的冗余和容错。每个`Partition`都有一个`Leader`副本和多个`Follower`副本。`Leader`副本负责处理读写请求(生产者发送数据的对象，消费者消费数据的对象)，`Follower`副本从`Leader`副本复制数据以保持数据一致性|当`Leader`副本出现故障时，`Kafka`会自动从`Follower`副本中选举出新的`Leader`副本，以保证服务的连续性|
 |`Zookeeper`|`Zookeeper`不是`Kafka`的直接组成部分，但它在`Kafka`集群中扮演着至关重要的角色，管理`Kafka`集群的元数据（如`Broker`信息、`Topic`信息、`Partition`信息等），并协调`Broker`之间的交互和选举。|`Zookeeper`的高可用性和强一致性保证了`Kafka`集群的稳定性和可靠性|
@@ -147,21 +147,6 @@ Follower 通过拉的方式从 Leader 同步数据。
 
 
 
-####  1.2.5、同步发送和异步发送
-
-生产者给 Kafka 发送数据，可以采用同步方式或者异步方式。
-
-> 同步方式：发送一批数据给 Kafka 后，等待 Kafka 返回结果：
-- 生产者等待10s，如果 broker 没有给出 ack 响应，就认为失败。
-- 生产者重试3次，如果还没有响应，就报错.
-
-> 异步方式：发送一批数据给 Kafka，只是提供一个回调函数：
-- 先将数据保存在生产者端的 buffer 中。buffer 大小是2万条。
-- 满足数据阈值或者数量阈值其中的一个条件就可以发送数据。
-- 发送一批数据的大小是500条。
-
-注：如果broker迟迟不给ack，而buffer又满了，开发者可以设置是否直接清空buffer中的数据。
-
 ### 1.3、Kafka的特点
 
 `Kafka`具有以下特点：
@@ -227,18 +212,23 @@ Controller 负责管理这些元数据，那么它与 Zookeeper 的元数据管�
 
 选举流程：
 
-1. 候选者注册：在`Kafka`集群启动时，每个`Broker`都有可能成为`Controller`的候选者。各候选者会在`Zookeeper`中创建临时有序节点（通常是`/controller`）来表明自己的参与。这些节点是临时的，意味着当`Broker`宕机或退出集群时，相应的节点会被自动删除；
-2. 节点的排序与选举：`Zookeeper`对候选者结点进行排序，具有最小序号的节点成为新的`Controller`，如果多个候选者具有相同的最小序号，那么`Zookeeper`会根据节点的创建时间来选择最终的`Controller`；
-3. 选举完成：一旦选举完成，新的`Controller`节点将被选出，并且其他候选者将知道哪个节点成为了新的`Controller`。新的`Controller`节点将负责管理`Kafka`集群的状态、执行分区分配、`Leader`选举等操作；
-4. 故障转移和重新选举：当前的`Controller`节点发生故障或失效时，`Kafka`集群会自动触发`Controller`的重新选举过程。这个过程由`Zookeeper`的临时节点和节点监听机制来保证。新的`Controller`候选者将尝试在`Zookeeper`中创建临时有序节点，参与新一轮的`Controller`选举过程。`ZooKeeper`将重新处理候选者节点，选举出新的`Controller`节点，并接管集群管理任务，确保`Kafka`集群的正常运行和高可用性。
+1. 候选者注册：在`Kafka`集群启动时，每个`Broker`都有可能成为`Controller`的候选者。各候选者会尝试在`Zookeeper`中创建临时有序临时节点（通常是`/controller`）来表明自己的参与。这些节点是临时的，意味着当`Broker`宕机或退出集群时，相应的节点会被自动删除。
+  
+2. 节点的排序与选举：`Zookeeper`对候选者结点进行排序，具有最小序号的节点成为新的`Controller`，如果多个候选者具有相同的最小序号，那么`Zookeeper`会根据节点的创建时间来选择最终的`Controller`，采用的是“先到先得”的抢占模式，`Zookeeper`会保证有且仅有一个`Broker`能创建成功，这个`Broker`就会成为集群的总控器`Controller`成功创建节点的 `Broker`将自己的`ID`、版本号等信息写入`/controller`节点。例如，节点内容可能为：`{"version":1, "brokerid":1001, "timestamp":"..."}`；
+
+3. 选举完成：一旦选举完成，新的`Controller`节点将被选出，并且其他候选者`Broker`将知道哪个节点成为了新的`Controller`(监听机制)。新的`Controller`节点将负责管理`Kafka`集群的状态、执行分区分配、`Leader`选举等操作，会向`Zookeeper`中写入`epoch`值，即`Controller`的版本号，其余`Broker`在接收元数据变更时，会校验该版本号，拒绝旧的`Controller`的指令；
+
+4. 故障转移和重新选举：当前的`Controller`节点发生故障或失效时，原先的`/controller`结点失效，`Kafka`集群会自动触发`Controller`的重新选举过程。这个过程由`Zookeeper`的临时节点和节点监听机制来保证。新的`Controller`候选者将尝试在`Zookeeper`中创建临时有序节点，参与新一轮的`Controller`选举过程。`ZooKeeper`将重新处理候选者节点，选举出新的`Controller`节点并更新`epoch`值，并接管集群管理任务，确保`Kafka`集群的正常运行和高可用性。
 
 
 #### 2.2.2、Controller的职责
 
 1. 集群的状态管理：
-   1. 监控集群中`Broker`的增减变化，包括处理`Broker`的加入，主动关闭和宕机，`Controller`需要及时更新集群元数据，并将集群变化通知到所有的 Broker 集群节点；
+   1. 为`Zookeeper`中的`/brokers/ids/`节点添加`BrokerChangeListener`，用来处理`Broker`增减的变化。监控集群中`Broker`的增减变化，包括处理`Broker`的加入，主动关闭和宕机，`Controller`需要及时更新集群元数据，并将集群变化通知到所有的`Broker`集群节点；
    2. 分区与副本管理：`Controller`负责管理和监控集群中所有分区的状态，包括`Topic`分区的创建、删除、状态转换以及副本的选举和状态更新。它通过`ZooKeeper`来协调这些任务，确保分区和副本的高可用性和一致性;
+
 2. 元数据管理：`Controller`还负责维护集群的元数据信息，从`Zookeeper`中读取和更新集群的元数据信息，如`Topic`的分区信息、每个分区的`Leader`副本信息。当集群中的元数据发生变化时，`Controller`会及时更新集群元数据并将更新后的信息同步给集群中的所有`Broker`，确保每个`Broker`都能获取到最新的元数据信息；
+
 3. 故障切换与内容复制：当分区的`Leader`副本发生故障时，`Controller`负责进行故障切换，选举新的`Leader`副本，并确保数据的正确复制和同步；
 
 
@@ -259,3 +249,75 @@ Controller 负责管理这些元数据，那么它与 Zookeeper 的元数据管�
   - NonExistentReplica: `Replica` 成功删除后，`replica` 进入 NonExistentReplica 状态
 
 ![副本状态机的切换](https://s2.51cto.com/oss/202104/09/de8f7c8bd4557cb535c4bf70d2afe0f6.png)
+
+#### 2.2.3、Leader 的选举
+
+由于 Controller 监听了很多的 Zookeeper 结点，所以能够感知到 Broker 的存活。
+
+
+> 副本优先机制：当分区 Leader 所在的 Broker 挂掉之后，Controller 会从每个 Partition 的 ISR 中取出第一个 Broker 里面的 Follower 作为 Leader。
+
+
+### 2.3、生产者 Producer
+
+正常的生产逻辑：
+- 配置生产者客户端参数和创建相应的生产者实例
+- 构建发送的消息
+- 发送消息
+- 关闭生产者实例
+
+#### 2.3.1、数据生产流程
+
+![数据生产流程](https://img2022.cnblogs.com/blog/2742789/202202/2742789-20220228223715656-1782209181.png)
+
+写入一条数据，需要指定四个参数：Topic、Partition、Key 和 Value，其中 Topic 和 Value (要写入的数据)是必须要指定的，而 Key 和 Partition 是可选的。对于一条记录，先对其进行序列化，然后根据 Topic 和 Partition，放进对应的发送队列中。如果 Partition 没填，分为两种情况：
+- Key 有值，按照 Key 进行哈希，相同 Key 去一个Partition
+- Key 无值，轮循选出 Partition
+
+Producer 将会和 Topic 下所有 Partition Leader 保持 socket 连接，消息由 Producer 直接通过socket 发送到 Broker。其中 Partition Leader的位置注册在Zookeeper中，Producer作为Zookeeper Client，已经注册了 watch 用来监听 Partition Leader 的变更事件，因此，可以准确的知道谁是当前的 leader。
+
+#### 2.3.2、重要生产者参数
+
+|生产者参数|说明|
+|-|-|
+|acks|指定分区中必须要有多少个副本接受这条消息，生产者才被认为写成功。acks 参数有3种类型的值(都是字符串类型)：<li> acks="1" (默认)。生产者发送消息之后，只要分区的 leader 副本成功写入消息，那么它就会收到来自服务端的成功响应。 折中方案。消息写入 leader 副本并 返回成功响应给生产者，且在被其他 follower 副本拉取之前 leader 副本崩溃，那么此 时消息还是会丢失<li>acks="0" 。生产者发送消息之后不需要等待任何服务端的响应。<li>acks="-1/all"。生产者在消息发送之后，需要等待 ISR 中的所有副本都成功 写入消息之后才能够收到来自服务端的成功响应。(最高可靠,leader 宕机也不丢失，生产者收到异常告知此次发送失败)|
+|max.request.size|限制生产者客户端能发送的消息的最大值。默认 1M|
+|compression.type|指定消息压缩方式，默认 "none"，还可以配置为 "gzip", "snappy", "lz4"|
+|connections.max.idle.ms|多久关闭闲置的连接|
+|retries, retry.backoff.ms|生产者重试次数和间隔。在需要保证消息顺序的场合建议把参数 max.in.flight . requests .per.connection 配置为 1|
+|linger.ms|指定生产者发送 ProducerBatch 之前等待更多消息 (ProducerRecord) 加入 ProducerBatch 的时间<li>生产者客户端会在 ProducerBatch 被填满或等待时间超过 linger .ms 值时发迭出去。增大这个参数的值会增加消息的延迟，但是同时能提升一定的吞 吐量。|
+|receive.buffer.bytes|socket 接受消息缓冲区(SO_RECBUF) 大小，默认 32kb。设置-1 则使用操作系统默认值|
+|request.timeout.ms|这个参数用来配置 Producer等待请求响应的最长时间，默认值为 30000 (ms)|
+
+
+####  2.3.2、同步发送和异步发送
+
+生产者给 Kafka 发送数据，可以采用同步方式或者异步方式，默认异步方式，可通过 producer.type 属性进行配置，Kafka 通过配置 request.required.acks 属性来确认消息的生产。
+
+ack
+
+> 同步方式：发送一批数据给 Kafka 后，等待 Kafka 返回结果：
+- 生产者等待10s，如果 broker 没有给出 ack 响应，就认为失败。
+- 生产者重试3次，如果还没有响应，就报错.
+
+> 异步方式：发送一批数据给 Kafka，只是提供一个回调函数：
+- 先将数据保存在生产者端的 buffer 中。buffer 大小是2万条。
+- 满足数据阈值或者数量阈值其中的一个条件就可以发送数据。
+- 发送一批数据的大小是500条。
+
+注：如果broker迟迟不给ack，而buffer又满了，开发者可以设置是否直接清空buffer中的数据。
+
+### 数据消费流程
+
+
+
+
+
+
+本笔记参考以下博客：
+
+[Kafka底层原理剖析](https://cloud.tencent.com/developer/article/1775065)
+
+[Kafka学习之路](https://www.cnblogs.com/qingyunzong/p/9004509.html)
+
+[Kafka原理篇：图解kakfa架构原理](https://www.51cto.com/article/656518.html)
