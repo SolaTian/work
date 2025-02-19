@@ -194,7 +194,39 @@ Follower 通过拉的方式从 Leader 同步数据。
 `Zookeeper`和`Kafka`的关系好比是，管理者和打工仔的关系，`Zookeeper`负责全局的协调和管理，`Kafka`负责处理具体的事务，相互协调使得分布式系统稳定运行。
 
 
-### 2.2、Kafka 结点的领导者——Controller
+### 2.2、Broker 端配置
+
+Broker 有一些重要的参数，主要是在 server.properties 配置文件中设置的。这个文件是每个 Kafka Broker 节点的核心配置文件，通常位于 Kafka 安装目录下的 config 目录中，下面详细说明
+
+|Broker 参数|说明|
+|-|-|
+|broker.id|每个 Kafka Broker 的唯一标识符|
+|listeners|指定 Kafka Broker 启动时监听的协议和端口。格式为 `protocol://host:port`。如果要配置多个监听器，可以使用逗号分隔，如果使用配置样本启动 Kafka，会监听 9092 端口，例如 `listeners=PLAINTEXT://localhost:9092`|
+|zookeeper connect|用于保存 Broker 元数据的 Zookeeper 地址是通过 zookeeper.connect 来指定的。如指定 localhost:2181 则表示这个 Zookeeper 是运行在本地 2181 端口上的。如通过 zk1:2181,zk2:2181,zk3:2181 来指定 zookeeper.connect 的多个参数值。该配置参数是用冒号分割的一组 hostname:port/path 列表，其含义如下:<li>hostname 是 Zookeeper 服务器的机器名或者 ip 地址；<li>port 是 Zookeeper 客户端的端口号;<li>/path 是可选择的 Zookeeper 路径，如果不指定默认使用根路径|
+|log.dirs|Kafka 把所有的消息都保存到磁盘上，存放这些日志片段的目录是通过 log.dirs 来制定的，它是用一组逗号来分割的本地系统路径，log.dirs 是没有默认值的，必须手动指定。比如通过 /home/kafka1,/home/kafka2,/home/kafka3 这样来配置这个参数的值|
+|num.recovery.threads.per.data.dir|以下 3 种情况，Kafka 会使用可配置的线程池来处理日志片段<li>服务器正常启动，用于打开每个分区的日志片段；<li>服务器崩溃后重启，用于检查和截断每个分区的日志片段；<li>服务器正常关闭，用于关闭日志片段。<br>默认情况下，每个日志目录仅使用一个线程。由于这些线程仅在服务器启动和崩溃时使用，所以可以设置大量的线程达到并行操作的目的。这样一旦某个服务器发生崩溃，可以使用并行操作节约时间。注意配置时的数字对应的是 log.dirs 指定的单个日志目录，即如果 log.dirs 指定了3个路径，num.recovery.threads.per.data.dir 被设为 8，则总共需要 24 个线程。|
+|auto.create.topics.enable|默认情况下，Kafka 会采用3种方式创建 Topic：<li>当一个生产者开始往主题写入消息时<li>当一个消费者开始从主题读取消息时<li>当任意一个客户端向主题发送元数据请求时<br>auto.create.topics.enable 参数建议设置成 false，即不允许自动创建 Topic|
+
+除此之外还有很多参数，具体遇到可以自行搜索参数含义。
+
+### 2.3、Topic
+
+Topic 有很多配置参数，有以下几种方式可以设置
+- 创建 Topic 时的参数配置
+- Kafka 的配置工具 kafka-topics.sh 中修改
+- 通过 server.properties 中的默认配置
+
+下面详细说明
+
+|num.partitions|说明|
+|-|-|
+|log.retention.ms|消息的保留时间，单位毫秒。超过该时间的消息将被删除。默认值是 7 天（168 hours）。|
+|log.retention.bytes|另一种保留消息的方式是判断消息是否超过限制大小。它的值通过参数 log.retention.bytes 来指定，作用在每一个分区上。也就是说，如果有一个包含 8 个分区的主题，并且 log.retention.bytes 被设置为 1GB，那么这个主题最多可以保留 8GB 数据。所以，当主题的分区个数增加时，整个主题可以保留的数据也随之增加。|
+|num.partitions|指定新创建的主题需要包含多少个分区，如果启用了主题自动创建功能（该功能是默认启用的），主题分区的个数就是该参数指定的值。该参数的默认值是 1。要注意，可以增加主题分区的个数，但不能减少分区的个数。|
+|message.max.bytes|broker 通过设置 message.max.bytes 参数来限制单个消息的大小，默认是 1000 000， 也就是 1MB，如果生产者尝试发送的消息超过这个大小，不仅消息不会被接收，还会收到 broker 返回的错误消息。跟其他与字节相关的配置参数一样，该参数指的是压缩后的消息大小，也就是说，只要压缩后的消息小于 mesage.max.bytes，那么消息的实际大小可以大于这个值。这个值对性能有显著的影响。值越大，那么负责处理网络连接和请求的线程就需要花越多的时间来处理这些请求。它还会增加磁盘写入块的大小，从而影响 IO 吞吐量。|
+
+
+### 2.4、Broker 的领导者——Controller
 
 > Controller：是 Kafka 集群中的一个特殊的 Broker，它除了像普通 Broker那样对外提供消息的生产、消费、同步功能外，还额外承担了管理 Kafka 集群的 Broker、Topic、分区等职责。
 
@@ -206,7 +238,7 @@ Controller 负责管理这些元数据，那么它与 Zookeeper 的元数据管�
 在后续新版的 Kafka 中，使用 KRaft 代替了 Zookeeper，实现了元数据管理的去中心化和性能优化。
 
 
-#### 2.2.1、Controller 的选举过程
+#### 2.4.1、Controller 的选举过程
 
 `Kafka`集群中的每一个`Broker`都有可能成为`Controller`，具体的选举依赖于`Zookeeper`。
 
@@ -221,7 +253,7 @@ Controller 负责管理这些元数据，那么它与 Zookeeper 的元数据管�
 4. 故障转移和重新选举：当前的`Controller`节点发生故障或失效时，原先的`/controller`结点失效，`Kafka`集群会自动触发`Controller`的重新选举过程。这个过程由`Zookeeper`的临时节点和节点监听机制来保证。新的`Controller`候选者将尝试在`Zookeeper`中创建临时有序节点，参与新一轮的`Controller`选举过程。`ZooKeeper`将重新处理候选者节点，选举出新的`Controller`节点并更新`epoch`值，并接管集群管理任务，确保`Kafka`集群的正常运行和高可用性。
 
 
-#### 2.2.2、Controller的职责
+#### 2.4.2、Controller的职责
 
 1. 集群的状态管理：
    1. 为`Zookeeper`中的`/brokers/ids/`节点添加`BrokerChangeListener`，用来处理`Broker`增减的变化。监控集群中`Broker`的增减变化，包括处理`Broker`的加入，主动关闭和宕机，`Controller`需要及时更新集群元数据，并将集群变化通知到所有的`Broker`集群节点；
@@ -250,7 +282,7 @@ Controller 负责管理这些元数据，那么它与 Zookeeper 的元数据管�
 
 ![副本状态机的切换](https://s2.51cto.com/oss/202104/09/de8f7c8bd4557cb535c4bf70d2afe0f6.png)
 
-#### 2.2.3、Leader 的选举
+#### 2.4.3、Leader 的选举
 
 由于 Controller 监听了很多的 Zookeeper 结点，所以能够感知到 Broker 的存活。
 
@@ -258,7 +290,7 @@ Controller 负责管理这些元数据，那么它与 Zookeeper 的元数据管�
 > 副本优先机制：当分区 Leader 所在的 Broker 挂掉之后，Controller 会从每个 Partition 的 ISR 中取出第一个 Broker 里面的 Follower 作为 Leader。
 
 
-### 2.3、生产者 Producer
+### 2.5、生产者 Producer
 
 正常的生产逻辑：
 - 配置生产者客户端参数和创建相应的生产者实例
@@ -266,7 +298,7 @@ Controller 负责管理这些元数据，那么它与 Zookeeper 的元数据管�
 - 发送消息
 - 关闭生产者实例
 
-#### 2.3.1、数据生产流程
+#### 2.5.1、数据生产流程
 
 ![数据生产流程](https://img2022.cnblogs.com/blog/2742789/202202/2742789-20220228223715656-1782209181.png)
 
@@ -276,7 +308,7 @@ Controller 负责管理这些元数据，那么它与 Zookeeper 的元数据管�
 
 Producer 将会和 Topic 下所有 Partition Leader 保持 socket 连接，消息由 Producer 直接通过socket 发送到 Broker。其中 Partition Leader的位置注册在Zookeeper中，Producer作为Zookeeper Client，已经注册了 watch 用来监听 Partition Leader 的变更事件，因此，可以准确的知道谁是当前的 leader。
 
-#### 2.3.2、重要生产者参数
+#### 2.5.2、重要生产者参数
 
 |生产者参数|说明|
 |-|-|
@@ -290,7 +322,7 @@ Producer 将会和 Topic 下所有 Partition Leader 保持 socket 连接，消�
 |request.timeout.ms|这个参数用来配置 Producer等待请求响应的最长时间，默认值为 30000 (ms)|
 
 
-####  2.3.2、同步发送和异步发送
+####  2.5.3、同步发送和异步发送
 
 生产者给 Kafka 发送数据，可以采用同步方式或者异步方式，默认异步方式，可通过 producer.type 属性进行配置，Kafka 通过配置 request.required.acks 属性来确认消息的生产。
 
@@ -307,7 +339,7 @@ ack
 
 注：如果broker迟迟不给ack，而buffer又满了，开发者可以设置是否直接清空buffer中的数据。
 
-### 数据消费流程
+### 2.6、消费者 Consumer
 
 
 
