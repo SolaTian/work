@@ -209,7 +209,7 @@ Broker 有一些重要的参数，主要是在 server.properties 配置文件中
 
 除此之外还有很多参数，具体遇到可以自行搜索参数含义。
 
-### 2.3、Topic
+### 2.3、Topic 和 Log
 
 Topic 有很多配置参数，有以下几种方式可以设置
 - 创建 Topic 时的参数配置
@@ -218,12 +218,18 @@ Topic 有很多配置参数，有以下几种方式可以设置
 
 下面详细说明
 
-|num.partitions|说明|
+|Topic 参数|说明|
 |-|-|
 |log.retention.ms|消息的保留时间，单位毫秒。超过该时间的消息将被删除。默认值是 7 天（168 hours）。|
 |log.retention.bytes|另一种保留消息的方式是判断消息是否超过限制大小。它的值通过参数 log.retention.bytes 来指定，作用在每一个分区上。也就是说，如果有一个包含 8 个分区的主题，并且 log.retention.bytes 被设置为 1GB，那么这个主题最多可以保留 8GB 数据。所以，当主题的分区个数增加时，整个主题可以保留的数据也随之增加。|
 |num.partitions|指定新创建的主题需要包含多少个分区，如果启用了主题自动创建功能（该功能是默认启用的），主题分区的个数就是该参数指定的值。该参数的默认值是 1。要注意，可以增加主题分区的个数，但不能减少分区的个数。|
 |message.max.bytes|broker 通过设置 message.max.bytes 参数来限制单个消息的大小，默认是 1000 000， 也就是 1MB，如果生产者尝试发送的消息超过这个大小，不仅消息不会被接收，还会收到 broker 返回的错误消息。跟其他与字节相关的配置参数一样，该参数指的是压缩后的消息大小，也就是说，只要压缩后的消息小于 mesage.max.bytes，那么消息的实际大小可以大于这个值。这个值对性能有显著的影响。值越大，那么负责处理网络连接和请求的线程就需要花越多的时间来处理这些请求。它还会增加磁盘写入块的大小，从而影响 IO 吞吐量。|
+|log.segment.bytes|当消息到达 broker 时，它们被追加到分区的当前日志片段上，当日志片段大小到达 log.segment.bytes 指定上限（默认为 1GB）时，当前日志片段就会被关闭，一个新的日志片段被打开。如果一个日志片段被关闭，就开始等待过期。这个参数的值越小，就越会频繁的关闭和分配新文件，从而降低磁盘写入的整体效率。|
+|log.segment.ms|指定日志多长时间被关闭的参数和，log.segment.ms 和 log.retention.bytes 也不存在互斥问题。日志片段会在大小或时间到达上限时被关闭，就看哪个条件先得到满足|
+
+#### log
+
+每个分区，Kafka 都会维护一个 Log
 
 
 ### 2.4、Broker 的领导者——Controller
@@ -264,7 +270,6 @@ Controller 负责管理这些元数据，那么它与 Zookeeper 的元数据管�
 3. 故障切换与内容复制：当分区的`Leader`副本发生故障时，`Controller`负责进行故障切换，选举新的`Leader`副本，并确保数据的正确复制和同步；
 
 
-
 `Kafka`分区和副本数据采用状态机方式进行管理，分区和副本的变化都在状态机内会引起状态机状态的变更，从而触发相应的变化事件：
 
 - 分区状态机（管理 Topic 的分区，它有以下 4 种状态）：
@@ -300,13 +305,59 @@ Controller 负责管理这些元数据，那么它与 Zookeeper 的元数据管�
 
 #### 2.5.1、数据生产流程
 
+
+
+
 ![数据生产流程](https://img2022.cnblogs.com/blog/2742789/202202/2742789-20220228223715656-1782209181.png)
 
-写入一条数据，需要指定四个参数：Topic、Partition、Key 和 Value，其中 Topic 和 Value (要写入的数据)是必须要指定的，而 Key 和 Partition 是可选的。对于一条记录，先对其进行序列化，然后根据 Topic 和 Partition，放进对应的发送队列中。如果 Partition 没填，分为两种情况：
+
+
+
+
+对于一条记录，先对其进行序列化，然后根据 Topic 和 Partition，放进对应的发送队列中。如果 Partition 没填，分为两种情况：
 - Key 有值，按照 Key 进行哈希，相同 Key 去一个Partition
 - Key 无值，轮循选出 Partition
 
 Producer 将会和 Topic 下所有 Partition Leader 保持 socket 连接，消息由 Producer 直接通过socket 发送到 Broker。其中 Partition Leader的位置注册在Zookeeper中，Producer作为Zookeeper Client，已经注册了 watch 用来监听 Partition Leader 的变更事件，因此，可以准确的知道谁是当前的 leader。
+
+
+#### 2.5.2、生产者消息发送流程
+
+消息发送过程中涉及到 2 个线程。`main`线程和`Sender`线程。在`main`线程中创建了一个双端队列 RecordAccumulator。 `main`线程将消息发送给`RecordAccumulator`，`Sender`线程不断从 RecordAccumulator 中拉取消息发送到 Kafka Broker。
+
+![数据发送流程](https://img2022.cnblogs.com/blog/2591061/202211/2591061-20221113182126109-2003618548.png)
+
+##### main 线程
+
+从创建一个`ProducerRecord`开始，这是 Kafka 的一个核心类。每写入一条数据，需要指定四个参数：Topic、Partition、Key 和 Value，其中 Topic 和 Value (要写入的数据)是必须要指定的，而 Key 和 Partition 是可选的。
+
+###### Producer 拦截器
+
+生产者拦截器可以直接在 producer.properties 文件中配置或者直接在代码中指定。
+
+生产者拦截器的作用：
+1. 对即将发送的数据进行修改或者增强，如：
+   - 对消息内容进行加密或者解密
+   - 为消息添加额外的元数据，如特定的头部信息
+   - 修改消息的值、键或者消息的其他元数据
+2. 消息的统计和监控：统计消息的发送情况、吞吐量、延迟等性能指标。
+3. 性能优化：可以根据当前生产者的负载，动态调整发送频率和大小，以平衡吞吐量和延迟
+4. 日志记录：可以记录每条消息的发送情况，便于排查问题。
+5. 模拟故障：在一些测试环境中，拦截器可以模拟网络延迟或消息传递故障，以帮助测试系统的性能。
+6. 消息过滤，某些特定情况下（如格式错误）拒绝发送某些消息到 Kafka
+
+###### Serializer 序列化器 
+
+经过生产者拦截器的`ProducerRecord`，由序列化器将这些键值对转化成为字节数组，这样才能够在网络上进行传输，数据到达分区器。
+
+###### Partitioner 分区器
+
+数据到达分区器之后，还需要确定向哪个分区发送消息。分区器通过 3 种策略决定消息要发送的分区。
+1. `ProducerRecord`指定了分区号，直接使用该分区号
+2. `ProducerRecord`没有指定分区号，但是有 Key 值，使用 Key 的 Hash 函数映射指定一个分区
+3. `ProducerRecord`既没有指定分区号，也没有 Key 值，将以轮询的方式选出一个分区。
+
+选择好分区之后，生产者就知道向哪个主题和分区发送消息了。
 
 #### 2.5.2、重要生产者参数
 
@@ -320,6 +371,7 @@ Producer 将会和 Topic 下所有 Partition Leader 保持 socket 连接，消�
 |linger.ms|指定生产者发送 ProducerBatch 之前等待更多消息 (ProducerRecord) 加入 ProducerBatch 的时间<li>生产者客户端会在 ProducerBatch 被填满或等待时间超过 linger .ms 值时发迭出去。增大这个参数的值会增加消息的延迟，但是同时能提升一定的吞 吐量。|
 |receive.buffer.bytes|socket 接受消息缓冲区(SO_RECBUF) 大小，默认 32kb。设置-1 则使用操作系统默认值|
 |request.timeout.ms|这个参数用来配置 Producer等待请求响应的最长时间，默认值为 30000 (ms)|
+|bootstrap.servers|生产者连接集群所需的broker地址清单|
 
 
 ####  2.5.3、同步发送和异步发送
