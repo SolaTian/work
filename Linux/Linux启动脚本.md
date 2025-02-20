@@ -79,20 +79,72 @@ U-Boot 的主要任务包括以下：
 2. 内存管理初始化：内核进一步完善内存管理机制，对系统的物理内存进行分页，建立虚拟内存映射，为后续进程运行分配内存空间。同时也会初始化内核自身的数据结构和缓冲区，确保内核能够合理使用内存资源。
 3. 进程管理初始化：内核创建第一个用户级进程，即 init 进程（在 Systemd 出现后，通常由 Systemd 替代 init 进程的角色）。这个进程是所有用户进程的祖先，进程ID（PID）为 1。init 进程的启动标志系统从内核空间进入用户空间。
 
+### init 进程
 
-## 启动脚本(initrun.sh)
+init 进程会去读取配置文件，根据配置文件中的指令去执行各种启动脚本
 
-桌面版的启动脚本`initrun.sh`（或者其他名字）的存放和编写方式由具体的Linux发行版和系统配置。有可能放置在以下位置
+init 进程有两种类型：
+1. 传统 SysVinit：传统 Linux 系统，init 进程会读取 /etc/inittab 配置文件，如下
+   
+        # ls /etc
+        S_udev        group         inittab       psh_rsa.conf  shells
+        TZ            hosts         my.cnf        resolv.conf   udev
+        app           inetd.conf    passwd        services      udev.conf
+        dropbear      init.d        profile       sh_tmo
 
-    /etc/init.d/
-    /etc/rc.local/                      
-    /etc/systemd/system/                #对于使用Systemd的系统，启动脚本通道存放在系统的这个目录下
-    /etc/init/
+        #cat /etc/inittab
+        ::sysinit:/etc/init.d/rcS
+        ::respawn:-/bin/psh
+        ::restart:/sbin/init
 
-而在嵌入式系统，启动脚本可能被放置在一些自定义路径中，在定制化的启动脚本中，就会做如下配置：
+        # cat /etc/init.d/rcS
+        #! /bin/sh
+        /bin/mount -t proc proc /proc
+        /bin/mount -t sysfs sysfs /sys
+        /bin/mount -t ramfs ramfs /home
+        /sbin/iptables -A INPUT -p tcp --dport 22 -j DROP
 
-- 设置环境变量
-- 设置OOM阈值等
-- 配置网络接口
-- 定制启动各个进程app
+        /etc/app
+
+2. Systemd：现代 Linux 系统使用 Systemd 作为 init 进程，采用并行启动方式，提升了系统的启动速度，读取 /etc/systemd 目录下的配置文件
+
+inittab 配置文件格式为
+
+    id:runlevels:action:process
+
+字段含义如下：
+- id: 表示特定标识符，可为空
+- runlevels：运行级别，为空表示适用所有运行级别
+  - 0：关机状态
+  - 1：单用户模式
+  - 2-5：多用户模式
+  - 6：重启状态
+- action：指定系统在何时以及如何执行 process 字段中的进程
+  - sysinit：在系统初始化阶段执行，通常用于完成一些基本的系统设置，如挂载文件系统、启动 udev 服务等。inittab 文件中通常只有一个 sysinit 动作的配置项。
+  - respawn：如果指定的进程终止，系统会自动重新启动该进程，确保进程始终处于运行状态。常用于需要持续运行的服务，如登录 shell 进程。
+  - wait：系统会等待指定的进程执行完毕后才会继续执行 inittab 文件中的下一个配置项。
+  - once：进程只在进入相应运行级别时执行一次，不会自动重启。
+  - restart：当 init 进程接收到特定的信号（通常是 SIGHUP）时，会重新启动指定的进程。
+  - ctrlaltdel：当用户按下 Ctrl + Alt + Del 组合键时，执行指定的进程，通常用于实现系统重启功能。
+  - shutdown：在系统关机时执行指定的进程，用于完成一些清理工作。
+- process：要执行的脚本路径
+
+可以看到 ::sysinit:/etc/init.d/rcS 这个表示的就是：在系统启动时，会首先执行 /etc/init.d/rcS 脚本
+
+再来看上面的 /etc/init.d/rcS 这个脚本内容，它首先挂载了必要的文件系统（proc 文件系统，sysfs 文件系统，ramfs 文件系统）到指定目录、配置防火墙规则，并执行自定义的应用程序初始化脚本。这个 /etc/app 脚本就是自定义的应用程序脚本了。
+
+这个脚本会根据具体的嵌入式系统完成一些如分区挂载，网络接口配置，执行初始化脚本（如initrun.sh）等工作。
+
+## 应用启动脚本(initrun.sh)
+
+这就是嵌入式系统的定制化脚本了，常常会有以下配置：
+
+- 挂载文件系统
+- 系统参数配置
+- 加载动态库资源和可执行文件资源
+- 加载驱动
+- 配置网卡，启用 ssh 等
+- 加载具体的嵌入式业务进程 
+
+确保整个系统能够正常运行。
 
