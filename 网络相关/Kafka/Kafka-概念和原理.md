@@ -1,8 +1,21 @@
 # Kafka
 
-## 1、Kafka基本概念
+- [Kafka 基本概念](#1kafka基本概念)
+  - [什么是 Kafka](#11什么是kafka)
+    - [消息系统](#111消息系统)
+    - [发布订阅式和点对点式](#112发布-订阅式与点对点式)
+  - [Kafka 的组成](#12kafka的组成)
+  - 
+- [Kafka 原理](#2kafka-原理)
+  - [Kafka 的管理和支持——Zookeeper](#21kafka-的管理和支持zookeeper)
+  - [Broker 端配置](#22broker-端配置)
+  - [Topic 和 Log](#23topic-和-log)
+  - [Broker 的领导者——Controller](#24broker-的领导者controller)
+  - [](#25生产者-producer)
+  - [](#26消费者-consumer)
+## 1、Kafka 基本概念
 
-### 1.1、什么是Kafka
+### 1.1、什么是 Kafka
 
 > Kafka是一种分布式发布-订阅消息系统，主要用途就是实时数据流的处理和传输。
 
@@ -329,6 +342,11 @@ Producer 将会和 Topic 下所有 Partition Leader 保持 socket 连接，消�
 
 ##### main 线程
 
+
+![main 线程](https://img2022.cnblogs.com/blog/2591061/202211/2591061-20221119152602831-1556480711.png)
+
+![main 线程发送数据到缓冲区](https://img2022.cnblogs.com/blog/2591061/202211/2591061-20221119152918269-1015214468.png)
+
 从创建一个`ProducerRecord`开始，这是 Kafka 的一个核心类。每写入一条数据，需要指定四个参数：Topic、Partition、Key 和 Value，其中 Topic 和 Value (要写入的数据)是必须要指定的，而 Key 和 Partition 是可选的。
 
 ###### Producer 拦截器
@@ -358,6 +376,48 @@ Producer 将会和 Topic 下所有 Partition Leader 保持 socket 连接，消�
 3. `ProducerRecord`既没有指定分区号，也没有 Key 值，将以轮询的方式选出一个分区。
 
 选择好分区之后，生产者就知道向哪个主题和分区发送消息了。
+
+
+##### 消息累加器 RecordAccumulator
+
+经过拦截器、序列化器、分区器之后的消息缓存到消息累加器`RecordAccumulator`中,`RecordAccumulator` 缓存的大小可以通过生产者客户端参数 buffer.memory 配置，默认值为 33554432B ，即32MB。 如果生产者发送消息的速度超过发送到服务器的速度 ，则会导致生产者空间不足，这个时候 KafkaProducer 的 `send（）`方法调用要么被阻塞，要么抛出异常，这个取决于参数 max.block.ms 的配置，此参数的默认值为 60000,即 60 秒 。
+
+#### sender 线程
+
+![sender 线程](https://img2022.cnblogs.com/blog/2591061/202211/2591061-20221119152805483-1834132623.png)
+
+![sender 线程发送数据](https://img2022.cnblogs.com/blog/2591061/202211/2591061-20221119153038758-1123867300.png)
+
+
+`sender`从`RecordAccumulator`中获取缓存的消息之后，会进一步将原本＜分区,Deque <Producer Batch＞＞ 的保存形式转变成 ＜Node , List< ProducerBatch＞的形式，其中 Node 表示 Kafka 集群的 broker 节点 
+
+发送消息主要有以下几种方式：发后即忘方式、同步消息发送、异步消息发送
+
+##### 发后即忘方式
+
+生产者调用`send()`方法发送消息`ProducerRecord`对象，消息先被写入分区的缓冲区中，然后分批次发送给 Kafka Broker。
+
+发送成功后，`send()`方法会返回一个`RecordMetadata`类型的`Future`对象。但是发后既忘方式并不处理这个`Future`对象，或者压根不返回这个对象。所以并没有办法知道消息发送是否成功。
+
+##### 同步消息发送
+
+同步发送的方式，使用`send()`方式之后，会立即调用`Future.get()`方法阻塞当前线程，等待服务器返回确认结果`RecordMetadata`。
+
+##### 异步消息发送
+
+同步发送消息都有个问题，那就是同一时间只能有一个消息在发送，这会造成许多消息无法直接发送，造成消息滞后，无法发挥效益最大化。
+
+异步发送的方式，发送消息时注册回调函数`Callback`，消息发送后不阻塞，结果通过回调异步处理
+
+##### 三种发送方式的特点对比
+
+|发送方式|优点|缺点|
+|-|-|-|
+|发后即忘|吞吐量最高|可能丢失消息，仅适用于可靠性要求极低的方式，如可以容忍日志丢失类的场景|
+|同步发送|吞吐量低|可靠性高，要求强一致性的场景|
+|异步发送|吞吐量高|可靠性中等|
+
+
 
 #### 2.5.2、重要生产者参数
 
