@@ -89,22 +89,7 @@ Kafka 由以下部分组成：
 
 #### 1.2.1、Topic、Consumer Group、Partition 的关系
 
-> Partition 数量决定了每个 Consumer Group 中并发消费者的最大数量。
 
-![](https://ask.qcloudimg.com/http-save/2039230/ev6txob5p8.png)
-
-如上面左图所示，如果只有两个分区，即使一个组内的消费者有4个，也会有两个空闲的。   
-如上面右图所示，有4个分区，每个消费者消费一个分区，并发量达到最大4。
-
-
-![](https://ask.qcloudimg.com/http-save/2039230/j1r2rsufsw.png)
-
-不同的消费者组消费同一个 Topic，这个 Topic 有4个分区，分布在两个节点上。左边的 Group1 有2个消费者，每个消费者就要消费两个分区才能把消息完整的消费完，右边的 Group2 有4个消费者，每个消费者消费一个分区即可.
-
-总结这三者的关系：
-1. 某一个主题下的分区数，对于消费该主题的同一个消费组下的消费者数量，应该小于等于该主题下的分区数。如：某一个主题有4个分区，那么消费组中的消费者应该小于等于4，而且最好与分区数成整数倍 1、2、4 。
-2. 同一个分区下的数据，在同一时刻，不能同一个消费组的不同消费者消费。
-3. 分区数越多，同一时间可以有越多的消费者来进行消费，消费数据的速度就会越快，提高消费的性能
 
 #### 1.2.2、Segment 文件
 
@@ -333,8 +318,23 @@ Controller 负责管理这些元数据，那么它与 Zookeeper 的元数据管�
 
 Producer 将会和 Topic 下所有 Partition Leader 保持 socket 连接，消息由 Producer 直接通过socket 发送到 Broker。其中 Partition Leader的位置注册在Zookeeper中，Producer作为Zookeeper Client，已经注册了 watch 用来监听 Partition Leader 的变更事件，因此，可以准确的知道谁是当前的 leader。
 
+#### 2.5.2、创建生产者
 
-#### 2.5.2、生产者消息发送流程
+要想 Kafka 中写入消息，首先需要创建一个生产者对象。Kafka 生产者有3个必选属性
+
+1. bootstrap.servers: 该属性指定 Broker 的地址清单，清单中不需要包含所有的 Broker 地址，生产者会从给定的 Broker 地址中找到其他的 Broker 信息，不过建议至少提供 2 个 Broker 信息，一旦其中一个宕机，生产者仍然能够连接到集群上
+2. key.serializer: 生产者需要知道采用何种方式把 Java 对象转换为字节数组。key.serializer 必须被设置为一个实现了 org.apache.kafka.common.serialization.Serializer 接口的类，生产者会使用这个类把键对象序列化为字节数组。Serializer 是一个接口，它表示类将会采用何种方式序列化，它的作用是把对象转换为字节，实现了 Serializer 接口的类主要有 ByteArraySerializer、StringSerializer、IntegerSerializer ，其中 ByteArraySerialize 是 Kafka 默认使用的序列化器。
+3. value.serializer 指定的类会将值序列化
+
+示例，创建 Kafka 生产者
+
+        private Properties properties = new Properties();
+        properties.put("bootstrap.servers","broker1:9092,broker2:9092");
+        properties.put("key.serializer","org.apache.kafka.common.serialization.StringSerializer");
+        properties.put("value.serializer","org.apache.kafka.common.serialization.StringSerializer");
+        properties = new KafkaProducer<String,String>(properties);
+
+#### 2.5.3、生产者消息发送流程
 
 消息发送过程中涉及到 2 个线程。`main`线程和`Sender`线程。在`main`线程中创建了一个双端队列 RecordAccumulator。 `main`线程将消息发送给`RecordAccumulator`，`Sender`线程不断从 RecordAccumulator 中拉取消息发送到 Kafka Broker。
 
@@ -371,18 +371,19 @@ Producer 将会和 Topic 下所有 Partition Leader 保持 socket 连接，消�
 ###### Partitioner 分区器
 
 数据到达分区器之后，还需要确定向哪个分区发送消息。分区器通过 3 种策略决定消息要发送的分区。
-1. `ProducerRecord`指定了分区号，直接使用该分区号
-2. `ProducerRecord`没有指定分区号，但是有 Key 值，使用 Key 的 Hash 函数映射指定一个分区
-3. `ProducerRecord`既没有指定分区号，也没有 Key 值，将以轮询的方式选出一个分区。
+1. `ProducerRecord`指定了分区号，直接使用该分区号；
+2. `ProducerRecord`没有指定分区号，但是有 Key 值，使用 Key 的 Hash 函数映射指定一个分区，确保相同`Key`的消息分配到同一分区。
+3. `ProducerRecord`既没有指定分区号，也没有 Key 值，将以轮询的方式选出一个分区，在较新版本的 Kafka 中，会采用粘性策略，直到当前批次达到阈值（batch.size 或 linger.ms）后，再切换到下一个分区。
+4. 用户自定义分区策略，通过实现 `org.apache.kafka.clients.producer.Partitioner` 接口，可以定义自己的分区逻辑，显示配置生产者端的参数 Partitioner.class。
 
 选择好分区之后，生产者就知道向哪个主题和分区发送消息了。
 
 
-##### 消息累加器 RecordAccumulator
+###### 消息累加器 RecordAccumulator
 
 经过拦截器、序列化器、分区器之后的消息缓存到消息累加器`RecordAccumulator`中,`RecordAccumulator` 缓存的大小可以通过生产者客户端参数 buffer.memory 配置，默认值为 33554432B ，即32MB。 如果生产者发送消息的速度超过发送到服务器的速度 ，则会导致生产者空间不足，这个时候 KafkaProducer 的 `send（）`方法调用要么被阻塞，要么抛出异常，这个取决于参数 max.block.ms 的配置，此参数的默认值为 60000,即 60 秒 。
 
-#### sender 线程
+##### sender 线程
 
 ![sender 线程](https://img2022.cnblogs.com/blog/2591061/202211/2591061-20221119152805483-1834132623.png)
 
@@ -393,23 +394,23 @@ Producer 将会和 Topic 下所有 Partition Leader 保持 socket 连接，消�
 
 发送消息主要有以下几种方式：发后即忘方式、同步消息发送、异步消息发送
 
-##### 发后即忘方式
+###### 发后即忘方式
 
 生产者调用`send()`方法发送消息`ProducerRecord`对象，消息先被写入分区的缓冲区中，然后分批次发送给 Kafka Broker。
 
 发送成功后，`send()`方法会返回一个`RecordMetadata`类型的`Future`对象。但是发后既忘方式并不处理这个`Future`对象，或者压根不返回这个对象。所以并没有办法知道消息发送是否成功。
 
-##### 同步消息发送
+###### 同步消息发送
 
-同步发送的方式，使用`send()`方式之后，会立即调用`Future.get()`方法阻塞当前线程，等待服务器返回确认结果`RecordMetadata`。
+同步发送的方式，使用`send()`方式之后，会立即调用`Future.get()`方法阻塞当前线程，等待服务器返回确认结果`RecordMetadata`，如果服务器返回错误，`get()` 方法会抛出异常，如果没有发生错误，我们会得到 RecordMetadata 对象，可以用它来查看消息记录。
 
-##### 异步消息发送
+###### 异步消息发送
 
 同步发送消息都有个问题，那就是同一时间只能有一个消息在发送，这会造成许多消息无法直接发送，造成消息滞后，无法发挥效益最大化。
 
 异步发送的方式，发送消息时注册回调函数`Callback`，消息发送后不阻塞，结果通过回调异步处理
 
-##### 三种发送方式的特点对比
+###### 三种发送方式的特点对比
 
 |发送方式|优点|缺点|
 |-|-|-|
@@ -418,44 +419,271 @@ Producer 将会和 Topic 下所有 Partition Leader 保持 socket 连接，消�
 |异步发送|吞吐量高|可靠性中等|
 
 
+#### 2.5.4、重要生产者参数
 
-#### 2.5.2、重要生产者参数
+上面大致介绍了 Kafka 生产者生产和发送消息的流程，下面分类介绍一些生产者的重要参数。
 
-|生产者参数|说明|
-|-|-|
-|acks|指定分区中必须要有多少个副本接受这条消息，生产者才被认为写成功。acks 参数有3种类型的值(都是字符串类型)：<li> acks="1" (默认)。生产者发送消息之后，只要分区的 leader 副本成功写入消息，那么它就会收到来自服务端的成功响应。 折中方案。消息写入 leader 副本并 返回成功响应给生产者，且在被其他 follower 副本拉取之前 leader 副本崩溃，那么此 时消息还是会丢失<li>acks="0" 。生产者发送消息之后不需要等待任何服务端的响应。<li>acks="-1/all"。生产者在消息发送之后，需要等待 ISR 中的所有副本都成功 写入消息之后才能够收到来自服务端的成功响应。(最高可靠,leader 宕机也不丢失，生产者收到异常告知此次发送失败)|
-|max.request.size|限制生产者客户端能发送的消息的最大值。默认 1M|
-|compression.type|指定消息压缩方式，默认 "none"，还可以配置为 "gzip", "snappy", "lz4"|
-|connections.max.idle.ms|多久关闭闲置的连接|
-|retries, retry.backoff.ms|生产者重试次数和间隔。在需要保证消息顺序的场合建议把参数 max.in.flight . requests .per.connection 配置为 1|
-|linger.ms|指定生产者发送 ProducerBatch 之前等待更多消息 (ProducerRecord) 加入 ProducerBatch 的时间<li>生产者客户端会在 ProducerBatch 被填满或等待时间超过 linger .ms 值时发迭出去。增大这个参数的值会增加消息的延迟，但是同时能提升一定的吞 吐量。|
-|receive.buffer.bytes|socket 接受消息缓冲区(SO_RECBUF) 大小，默认 32kb。设置-1 则使用操作系统默认值|
-|request.timeout.ms|这个参数用来配置 Producer等待请求响应的最长时间，默认值为 30000 (ms)|
-|bootstrap.servers|生产者连接集群所需的broker地址清单|
+|必填参数|说明|示例|
+|-|-|-|
+|bootstrap.servers|生产者连接集群所需的broker地址清单。格式：`host1:port,host2:port`|`localhost:9092`|
+|key.serializer|用于 key 键的序列化，它实现了 org.apache.kafka.common.serialization.Serializer 接口|StringSerializer|
+|value.serializer|用于 value 值的序列化，实现了 org.apache.kafka.common.serialization.Serializer 接口|StringSerializer|
+
+|核心性能优化参数|说明|示例|
+|-|-|-|
+|batch.size|单个批次（Batch）的大小（字节）。批次填满或达到 linger.ms 时间后发送。|默认值：16384 (16KB)，增大可提升吞吐量，但会增大延迟。|
+|linger.ms|指定生产者发送 ProducerBatch 之前等待更多消息 (ProducerRecord) 加入 ProducerBatch 的时间|默认值：0（立即发送）增大可积累更多消息批量发送，提升吞吐量，但增加延迟。|
+|buffer.memory|此参数用来设置生产者内存缓冲区的大小，生产者用它缓冲要发送到服务器的消息。如果应用程序发送消息的速度超过发送到服务器的速度，会导致生产者空间不足。|默认值：33554432 (32MB)|
+|compression.type|指定消息压缩方式，默认 "none"，还可以配置为 "gzip", "snappy", "lz4"|默认值：none，启用压缩可减少网络传输量，提升吞吐，但增加 CPU 消耗。|
+|max.in.flight.requests.per.connection|生产者在收到服务器响应之前可以发送多少消息，它的值越高，就会占用越多的内存，不过也会提高吞吐量。把它设为1 可以保证消息是按照发送的顺序写入服务器。|设为 1 可保证分区内消息顺序，但降低吞吐量；增大可提升并发，但可能导致服务端乱序（需结合 acks 配置）|
+|max.request.size|限制生产者客户端能发送的消息的最大值。|默认 1M|
+
+|可靠性参数|说明|示例|
+|-|-|-|
+|acks|指定分区中必须要有多少个副本接受这条消息，生产者才被认为写成功。|acks 参数有3种类型的值(都是字符串类型)：<li> acks="1" (默认)。生产者发送消息之后，只要分区的 leader 副本成功写入消息，那么它就会收到来自服务端的成功响应。 折中方案，可靠性和吞吐量都是中等。消息写入 leader 副本并 返回成功响应给生产者，且在被其他 follower 副本拉取之前 leader 副本崩溃，那么此时消息还是会丢失<li>acks="0" 。生产者发送消息之后不需要等待任何服务端的响应，可以达到最大吞吐量，但是可靠性不高。<li>acks="-1/all"。生产者在消息发送之后，需要等待 ISR 中的所有副本都成功 写入消息之后才能够收到来自服务端的成功响应。(最高可靠,leader 宕机也不丢失，生产者收到异常告知此次发送失败)，但是它的吞吐量最低|
+|retries|发送失败后的重试次数。消息在从生产者发出到成功写入服务器之前可能发生一些临时性的异常，比如网络抖动、leader 副本的选举等，这种异常往往是可以自行恢复的，生产者可以通过配置 retries大于 0 的值，以此通过 内 部重试来恢复而不是一昧地将异常抛给生产者的应用程序，如果达到这个次数，生产者会放弃重试并返回错误|默认值：0，配置大于 0 的数|
+|retry.backoff.ms|重试间隔时间（毫秒）。|默认值：100 ms，适当增大（如 500）避免频繁重试对 Broker 造成压力。|
+|enable.idempotence|是否启用幂等性（保证消息仅发送一次）。|默认值：false，若需严格一次语义（Exactly-Once），需设为 true，并设置 acks=all|
+|request.timeout.ms	|这个参数用来配置 Producer等待请求响应的最长时间|默认值为 30000 (ms)，网络延迟高时适当增大，但过大会降低故障感知速度|
+|max.block.ms|此参数指定了在调用 `send()` 方法或使用 `partitionFor()` 方法获取元数据时生产者的最大阻塞时间或者当生产者的发送缓冲区已满的最大等待时间，生产者会抛出超时异常。|默认60000 ms（1min），若频繁超时，需检查 buffer.memory 或网络问题。|
+
+|高级配置参数|说明|示例|
+|-|-|-|
+|partitioner.class|自定义分区器类（需实现 `org.apache.kafka.clients.producer.Partitioner`）|默认值：`DefaultPartitioner`，需按业务逻辑分配分区时使用（如根据业务 Key 哈希）。|
+|connections.max.idle.ms|多久关闭闲置的连接|默认值：540000 ms|频繁创建连接影响性能时，可增大此值。|
+|receive.buffer.bytes|指定了 TCP Socket 接收数据包的缓冲区的大小。|默认 32kb，设置为 -1，就使用操作系统的默认值|
+|send.buffer.bytes|指定了 TCP Socket 发送数据包的缓冲区的大小|默认 128kb，设置为 -1，就使用操作系统的默认值|
+|delivery.timeout.ms|消息从发送到收到 Broker 确认的总超时时间（包括重试）。|默认值 120000 ms，需大于 linger.ms + request.timeout.ms，避免未完成发送就超时。|
 
 
-####  2.5.3、同步发送和异步发送
+下面给出几个典型场景的生产者配置：
 
-生产者给 Kafka 发送数据，可以采用同步方式或者异步方式，默认异步方式，可通过 producer.type 属性进行配置，Kafka 通过配置 request.required.acks 属性来确认消息的生产。
+场景1：高吞吐量（日志收集）
 
-ack
+    batch.size=65536       # 64KB
+    linger.ms=50           # 等待50ms积累批次
+    compression.type=lz4   # 高效压缩
+    acks=1                 # 平衡可靠性
+    buffer.memory=67108864 # 64MB
+    max.in.flight.requests.per.connection=5 # 提升并发
 
-> 同步方式：发送一批数据给 Kafka 后，等待 Kafka 返回结果：
-- 生产者等待10s，如果 broker 没有给出 ack 响应，就认为失败。
-- 生产者重试3次，如果还没有响应，就报错.
+场景2：高可靠性（金融交易）
 
-> 异步方式：发送一批数据给 Kafka，只是提供一个回调函数：
-- 先将数据保存在生产者端的 buffer 中。buffer 大小是2万条。
-- 满足数据阈值或者数量阈值其中的一个条件就可以发送数据。
-- 发送一批数据的大小是500条。
+    acks=all
+    enable.idempotence=true
+    retries=10
+    retry.backoff.ms=500
+    max.in.flight.requests.per.connection=1 # 保证顺序
+    delivery.timeout.ms=180000              # 3分钟
 
-注：如果broker迟迟不给ack，而buffer又满了，开发者可以设置是否直接清空buffer中的数据。
+场景3：低延迟（实时监控）
+
+    linger.ms=0            # 立即发送
+    batch.size=16384        # 小批次
+    compression.type=none  # 避免压缩耗时
+    max.in.flight.requests.per.connection=5
+    request.timeout.ms=5000
+
 
 ### 2.6、消费者 Consumer
 
+一个正常的消费逻辑需要具备以下几个步骤：
+
+1. 配置消费者客户端参数及创建相应的消费者实例。
+2. 订阅主题。
+3. 拉取消息并消费。
+4. 提交消费位移。
+5. 关闭消费者实例。
 
 
+消息经由生产者发送到 Kafka Broker 的 Topic 之后，就会被消费者订阅消费。应用程序首先需要创建一个 KafkaConsumer 对象，订阅主题并开始接受消息，验证消息并保存结果。
 
+一段时间后，生产者往主题写入的速度超过了应用程序验证数据的速度，如果只使用单个消费者的话，应用程序会跟不上消息生成的速度，像多个生产者向相同的主题写入消息一样，这时候就需要多个消费者共同参与消费主题中的消息，就是消费者组的概念。
+
+
+有两种消费方式：
+- 一个消费者群组消费一个主题中的消息，这种消费模式又称为点对点的消费方式，点对点的消费方式又被称为消息队列
+- 一个主题中的消息被多个消费者群组共同消费，这种消费模式又称为发布-订阅模式
+
+
+#### 消费者组和分区重平衡
+
+
+一个群组中的消费者订阅的都是相同的主题，每个消费者接收主题一部分分区的消息。
+
+![](https://camo.githubusercontent.com/ea40f99b261c058d5d86ccf15542fa302d58b72e68b03f37535ba39cd0057c81/68747470733a2f2f696d67323031382e636e626c6f67732e636f6d2f626c6f672f313531353131312f3230313931312f313531353131312d32303139313132383132343531303134312d3238373837373633362e706e67)
+
+![](https://camo.githubusercontent.com/5c3a0fb5efbd083020476040d21152731402d23722e1395a7b10034c07497c04/68747470733a2f2f696d67323031382e636e626c6f67732e636f6d2f626c6f672f313531353131312f3230313931312f313531353131312d32303139313132383132343532333339312d313432383134383739382e706e67)
+
+![](https://camo.githubusercontent.com/da9d0f30aada1e277bd08f0c9d1c9914bea54137a186ff3cc5f6fb21a68cfceb/68747470733a2f2f696d67323031382e636e626c6f67732e636f6d2f626c6f672f313531353131312f3230313931312f313531353131312d32303139313132383132343533323539312d3637363033303337302e706e67)
+
+![](https://camo.githubusercontent.com/d4cdb39b865566751b2029846715b977d556e7557ac35bc0a1944b62a21193c9/68747470733a2f2f696d67323031382e636e626c6f67732e636f6d2f626c6f672f313531353131312f3230313931312f313531353131312d32303139313132383132343534333534332d313533323730343934342e706e67)
+
+
+向群组中增加消费者是横向伸缩消费能力的主要方式。可以通过增加消费组的消费者来进行水平扩展提升消费能力。
+
+这也是为什么建议创建主题时使用比较多的分区数，这样可以在消费负载高的情况下增加消费者来提升性能。另外，消费者的数量不应该比分区数多，因为多出来的消费者是空闲的，没有任何帮助。
+
+Kafka 还有个特性，消息只写入一次，每个应用都可以消费到所有的信息。
+
+![](https://camo.githubusercontent.com/3fd973f0a9473e0e57e83524b22195cb611870c252757caadc1af2f3fe02badd/68747470733a2f2f696d67323031382e636e626c6f67732e636f6d2f626c6f672f313531353131312f3230313931312f313531353131312d32303139313132383132343535333331312d313136373431323230372e706e67)
+
+
+通过上面图片的分析，可以得出
+
+最初是一个消费者订阅一个主题并消费其全部分区的消息，后来有一个消费者加入群组，随后又有更多的消费者加入群组，而新加入的消费者实例分摊了最初消费者的部分消息，这种把分区的所有权通过一个消费者转到其他消费者的行为称为**重平衡（Rebalance）** 。
+
+![](https://camo.githubusercontent.com/3a3db52c1799431b373b27b21ee9ac4cf8811fd808ce1fe96f3ac7c43aec79f4/68747470733a2f2f696d67323031382e636e626c6f67732e636f6d2f626c6f672f313531353131312f3230313931312f313531353131312d32303139313132383132343630333237372d3433313032353935312e706e67)
+
+
+##### 重平衡的优缺点
+
+|重平衡|说明|
+|-|:-|
+|优点|为消费者组带来了高可用性和伸缩性，可以放心的添加或者删除消费者|
+|缺点|<li>在重平衡期间，消费者无法读取消息，造成整个消费者组在重平衡的期间都不可用。<li>当分区被重新分配给另一个消费者时，消息当前的读取状态会丢失，它有可能还需要去刷新缓存，在它重新恢复状态之前会拖慢应用程序|
+
+消费者通过向 组织协调者（Broker） 发送心跳来维护自己是消费者组的一员并确认拥有的分区。对于不同不的消费群体来说，其组织协调者可以是不同的。只要消费者定期发送心跳，就会认为消费者是存活的并处理其分区中的消息。当消费者检索记录或者提交它所消费的记录时就会发送心跳。
+
+如果过了一段时间消费者停止发送心跳了，会话（Session）就会过期，组织协调者就会认为这个 Consumer 已经死亡，就会触发一次重平衡。如果消费者宕机并且停止发送消息，组织协调者会等待几秒钟，确认它死亡了才会触发重平衡。
+
+在这段时间里，死亡的消费者将不处理任何消息。在清理消费者时，消费者将通知协调者它要离开群组，组织协调者会触发一次重平衡，尽量降低处理停顿。
+
+**也就是说，在重平衡期间，消费者组中的消费者实例都会停止消费，等待重平衡的完成。而且重平衡这个过程很慢......**
+
+
+所以为了避免频繁的重平衡，可以得出下面的关系
+
+> Partition 数量决定了每个 Consumer Group 中并发消费者的最大数量。
+
+1. 某一个主题下的分区数，对于消费该主题的同一个消费组下的消费者数量，应该小于等于该主题下的分区数。如：某一个主题有4个分区，那么消费组中的消费者应该小于等于4，而且最好与分区数成整数倍 1、2、4 。
+2. 同一个分区下的数据，在同一时刻，不能同一个消费组的不同消费者消费。
+3. 分区数越多，同一时间可以有越多的消费者来进行消费，消费数据的速度就会越快，提高消费的性能。
+
+#### 创建消费者
+
+在读取消息之前，需要创建一个 KafkaConsumer 对象，这个对象和 KafkaProducer 对象十分像。使用3个属性就足矣，分别是 bootstrap.server，key.deserializer，value.deserializer。还有一个属性是 group.id 这个属性不是必须的，它指定了 KafkaConsumer 是属于哪个消费者群组。
+
+    Properties properties = new Properties();
+    properties.put("bootstrap.server","192.168.1.9:9092");     
+    properties.put("key.serializer","org.apache.kafka.common.serialization.StringSerializer");  
+    properties.put("value.serializer","org.apache.kafka.common.serialization.StringSerializer");
+    KafkaConsumer<String,String> consumer = new KafkaConsumer<>(properties);
+
+##### 主题订阅
+
+创建好消费者之后，就使用 `subscribe()` 方法接受一个主题列表作为参数，使用起来比较简单
+
+    consumer.subscribe(Collections.singletonList("customerTopic"));
+
+参数传入的是一个正则表达式，只订阅了一个 customerTopic，参数出入一个正则表达式，如果创建了新的主题，并且主题的名字和正则表达式相匹配，那么会立即触发一次重平衡，消费者就可以读取新的主题。
+
+##### 轮询消费
+
+Kafka 生产者产生的消息消费者是不知道的。Consumer 采用的是轮询的方式定期去 Kafka Broker 中进行数据的检索，如果有数据就用来消费，没有数据就继续轮询等待。
+
+    try {
+    while (true) {
+      ConsumerRecords<String, String> records = consumer.poll(Duration.ofSeconds(100));
+      for (ConsumerRecord<String, String> record : records) {
+        int updateCount = 1;
+        if (map.containsKey(record.value())) {
+          updateCount = (int) map.get(record.value() + 1);
+        }
+        map.put(record.value(), updateCount);
+      }
+    }
+  }finally {
+    consumer.close();
+  }
+
+第三行代码表示，Kafka 必须定期循环请求数据，否则就会认为该 Consumer 已经挂了，会触发重平衡，它的分区会移交给群组中的其它消费者。传给`poll()`方法的是一个超时时间，用 java.time.Duration 类来表示，如果该参数被设置为 0 ，`poll()` 方法会立刻返回，否则就会在指定的毫秒数内一直等待 Broker 返回数据。
+`poll()` 方法会返回一个记录列表。每条记录都包含了记录所属主题的信息，记录所在分区的信息、记录在分区中的偏移量，以及记录的键值对。一般会遍历这个列表，逐条处理每条记录。
+
+在退出应用程序之前使用`close()`方法关闭消费者。网络连接和 socket 也会随之关闭，并立即触发一次重平衡，而不是等待群组协调器发现它不再发送心跳并认定它已经死亡。
+
+
+#### 消费者的配置
+
+还是和生产者一样，对这些参数进行分类
+
+|必填参数|说明|示例|
+|-|-|-|
+|bootstrap.servers|消费者连接集群所需的broker地址清单。格式：`host1:port,host2:port`|`localhost:9092`|
+|key.serializer|用于 key 键的反序列化，它实现了 org.apache.kafka.common.serialization.Deserializer 接口|StringSerializer|
+|value.serializer|用于 value 值的反序列化，实现了 org.apache.kafka.common.serialization.Deserializer 接口|StringSerializer|
+|group.id|消费者组 ID，同一组内的消费者共同消费同一主题的分区|my-consumer-group|
+
+
+|核心消费控制参数|说明|示例|
+|-|-|-|
+|auto.offset.reset|指定了消费者在读取一个没有偏移量的分区或者偏移量无效的情况下的该如何处理。|它的默认值是 latest<li>- earliest：从最早偏移量开始消费。<li>- latest：从最新偏移量开始消费。<li>- none：抛出异常。|
+|enable.auto.commit|指定了消费者是否自动提交偏移量|默认值是 true。为了尽量避免出现重复数据和数据丢失，可以把它设置为 false，由自己控制何时提交偏移量。如果把它设置为 true，还可以通过 auto.commit.interval.ms 属性来控制提交的频率|
+|auto.commit.interval.ms|自动提交偏移量的间隔时间（毫秒）。|默认值：5000 (5秒)。缩短间隔可减少重复消费风险，但增加 Broker 负载；增大间隔提高吞吐量。|
+|max.poll.records|单次 poll() 调用返回的最大消息数。|默认值：500，设置时避免单次处理过多消息导致超时。|
+|max.poll.interval.ms|两次 poll() 调用的最大间隔时间（毫秒），超时则消费者被踢出组触发重平衡。|默认值：300000 (5分钟)。若消息处理耗时较长（如复杂计算），需增大此值以避免误判消费者失效。|
+|session.timeout.ms|指定了消费者可以多久不发送心跳。消费者与 Broker 会话超时时间（毫秒），超时则消费者被踢出组，就会触发重平衡。|默认值：3000 (3秒)。需大于 heartbeat.interval.ms 的 3 倍。设置的比默认值小，可以更快地检测和恢复崩愤的节点，不过长时间的轮询或垃圾收集可能导致非预期的重平衡。把该属性的值设置得大一些，可以减少意外的重平衡，不过检测节点崩溃需要更长的时间。|
+|heartbeat.interval.ms|消费者发送心跳给 Broker 的间隔时间（毫秒），一般这个参数和 session.timeout.ms 一起改。|默认值：1000 (1秒)。缩短间隔可更快检测失效消费者，但增加网络开销；通常保持默认。|
+
+
+|性能优化参数|说明|示例|
+|-|-|-|
+|fetch.min.bytes|指定了消费者从服务器获取记录的最小字节数。Broker 在收到消费者的数据请求时，如果可用的数据量小于 fetch.min.bytes 指定的大小，那么它会等到有足够的可用数据时才把它返回给消费者。这样可以降低消费者和 Broker 的工作负载|默认值：1KB。增大可减少请求次数，提高吞吐量，但增加延迟。|
+|fetch.max.bytes|消费者单次 fetch 请求从服务器获取记录的最大数据量（字节）。|默认值：50MB。 应避免单次请求过大|
+|fetch.max.wait.ms|指定 Broker 的等待时间，当一直无法满足 fetch.min.bytes 时，就会导致延时，当 Kafka 收到消费者的请求时，就会判断 fetch.min.bytes 和 fetch.max.wait.ms 哪个先满足|默认是 500 ms，为了避免潜在的延时，可以将该值设置的小一点|
+|max.partition.fetch.bytes|指定了服务器从每个分区里返回给消费者的最大字节数。<li>`KafkaConsumer.poll()`方法从每个分区里返回的记录最多不超过 max.partition.fetch.bytes 指定的字节<li>max.partition.fetch.bytes 的值必须比 broker 能够接收的最大消息的字节数(通过 max.message.size 属性配置大)，否则消费者可能无法读取这些消息，导致消费者一直挂起重试。<li>如果消费者单次调用`poll()`返回的数据太多，消费者需要更多的时间进行处理，可能无法及时进行下一个轮询来避免会话过期。如果出现这种情况，可以把 max.partition.fetch.bytes 值改小，或者延长会话过期时间|默认值：1MB|
+|connections.max.idle.ms|空闲连接关闭时间（毫秒）。|默认值：540000 (9分钟)。频繁重连影响性能时可适当增大。|
+
+|分区分配策略|说明|示例|
+|-|-|-|
+|partition.assignment.strategy|分区分配给消费者的策略类（可配置多个，逗号分隔）：<li>RangeAssignor：按范围分配。<li>RoundRobinAssignor：轮询分配。<li>StickyAssignor：粘性分配（减少重平衡时的分区迁移）。|默认值：RangeAssignor。StickyAssignor 适合消费者数量频繁变化的场景，减少重平衡开销。|
+
+
+|高级配置|说明|示例|
+|-|-|-|
+|client.id|broker 用来标识从客户端发送过来的消息，通常被用在日志、度量指标和配额中。|默认值：空字符串|
+
+下面给出几个典型场景的配置示例
+
+场景1：高吞吐量（日志处理）
+
+    fetch.min.bytes=1024           # 每次至少拉取1KB
+    fetch.max.wait.ms=500          # 等待最多500ms积累数据
+    max.partition.fetch.bytes=10485760  # 单分区拉取10MB
+    max.poll.records=1000          # 单次拉取1000条
+    enable.auto.commit=true        # 自动提交偏移量 
+    auto.commit.interval.ms=10000  # 10秒提交一次
+
+场景2：高可靠性（金融交易）
+
+    enable.auto.commit=false       # 手动提交偏移量
+    auto.offset.reset=earliest     # 避免漏消息
+    isolation.level=read_committed # 仅消费已提交事务的消息
+    max.poll.interval.ms=300000    # 允许处理耗时较长
+    session.timeout.ms=60000       # 增大会话超时
+
+场景3：低延迟（实时告警）
+
+    fetch.min.bytes=1             # 立即返回数据
+    fetch.max.wait.ms=10          # 最小等待时间
+    max.poll.records=100          # 少量消息快速处理
+    heartbeat.interval.ms=1000    # 快速检测失效消费者
+
+#### 提交和偏移量
+
+消费者每次调用 `poll()` 时，消费的是 Kafka 中还没有被消费的记录。要做到这一点，就需要记录上一次消费时的消费位移。这个消费位移必须被持久化保存，而不是内存中，否则消费者重启之后就会无法知晓之前的消费位移。
+
+在旧消费者客户端中，消费位移是存储在 ZooKeeper 中的 。 而在新消费者客户端中，消费位移存储在 Kafka 内 部的主题 consumer offsets 中 。 这里把将消费位移存储起来（持久化）的动作称为“提交’，消费者在消费完消息之后需要执行消费位移的提交。
+
+consumer offsets 这个主题会保存每次所发送消息中的分区偏移量，这个主题的主要作用就是消费者触发重平衡后记录偏移使用的，消费者每次向这个主题发送消息，正常情况下不触发重平衡，这个主题是不起作用的，当触发重平衡后，消费者停止工作，每个消费者可能会分到对应的分区，这个主题就是让消费者能够继续处理消息所设置的。
+
+如果提交的偏移量小于客户端最后一次处理的偏移量，那么位于两个偏移量之间的消息就会被重复处理
+
+![](https://camo.githubusercontent.com/dfbf256089e5cbb84ea714f89b6a3746cb64906aadfa9ea750ead6c61322456d/68747470733a2f2f696d67323031382e636e626c6f67732e636f6d2f626c6f672f313531353131312f3230313931312f313531353131312d32303139313132383132343631393931372d3935313334373936342e706e67)
+
+如果提交的偏移量大于最后一次消费时的偏移量，那么处于两个偏移量中间的消息将会丢失
+
+![](https://camo.githubusercontent.com/446552d314a493a8d0c6cdadbe258b1494a0f1f15faf170e9310bc695ffc93ec/68747470733a2f2f696d67323031382e636e626c6f67732e636f6d2f626c6f672f313531353131312f3230313931312f313531353131312d32303139313132383132343632373637332d313538373536383531392e706e67)
 
 
 本笔记参考以下博客：
