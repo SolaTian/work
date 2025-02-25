@@ -484,8 +484,17 @@ Producer 将会和 Topic 下所有 Partition Leader 保持 socket 连接，消�
     max.in.flight.requests.per.connection=5
     request.timeout.ms=5000
 
+### 2.6 节点 Broker
 
-### 2.6、消费者 Consumer
+#### 2.6.1 参数
+
+#### 2.6.2 副本
+
+#### 2.6.3 Controller
+
+#### Broker 工作流程
+
+### 2.7、消费者 Consumer
 
 一个正常的消费逻辑需要具备以下几个步骤：
 
