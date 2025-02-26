@@ -302,8 +302,6 @@ Controller 负责管理这些元数据，那么它与 Zookeeper 的元数据管�
 #### 2.5.1、数据生产流程
 
 
-
-
 ![数据生产流程](https://img2022.cnblogs.com/blog/2742789/202202/2742789-20220228223715656-1782209181.png)
 
 
@@ -505,7 +503,7 @@ Broker 的工作流程如下：
 
 下面开始逐一介绍其中涉及到的知识点
 
-#### 2.6.1 Broker 参数
+#### 2.6.1、Broker 参数
 
 Broker 有一些重要的参数，主要是在 server.properties 配置文件中设置的。这个文件是每个 Kafka Broker 节点的核心配置文件，通常位于 Kafka 安装目录下的 config 目录中，下面详细说明
 
@@ -531,14 +529,23 @@ Broker 有一些重要的参数，主要是在 server.properties 配置文件中
 |log.retention.hours|日志保留时间（小时）|默认：168 (7天)	根据存储容量和业务需求调整（如 72 小时）。|
 |log.retention.bytes|单个分区的最大日志大小（字节），超过则删除旧数据。|默认等于-1，表示无穷大。结合 log.retention.hours 使用|
 |log.segment.bytes|单个日志段文件的大小（字节）。|默认值：1073741824 (1GB)	增大可减少段文件数量，但延长索引重建时间（建议 1-10GB）。|
+|log.index.interval.bytes|kafka里面每当写入了指定大小的日志（.log），然后就往 index 文件里面记录一个索引。稀疏索引。|默认4kb|
 |log.cleanup.policy |日志清理策略。|默认值：delete。<li>delete：基于时间或大小删除。<li>compact：压缩保留最新键值。<br>需要保留键最新值时设为 compact（如事务日志）。|
+|num.recovery.threads.per.data.dir|以下 3 种情况，Kafka 会使用可配置的线程池来处理日志片段<li>服务器正常启动，用于打开每个分区的日志片段；<li>服务器崩溃后重启，用于检查和截断每个分区的日志片段；<li>服务器正常关闭，用于关闭日志片段。<br>默认情况下，每个日志目录仅使用一个线程。由于这些线程仅在服务器启动和崩溃时使用，所以可以设置大量的线程达到并行操作的目的。这样一旦某个服务器发生崩溃，可以使用并行操作节约时间。|注意配置时的数字对应的是 log.dirs 指定的单个日志目录，即如果 log.dirs 指定了3个路径，num.recovery.threads.per.data.dir 被设为 8，则总共需要 24 个线程。|
 
 
-|num.recovery.threads.per.data.dir|以下 3 种情况，Kafka 会使用可配置的线程池来处理日志片段<li>服务器正常启动，用于打开每个分区的日志片段；<li>服务器崩溃后重启，用于检查和截断每个分区的日志片段；<li>服务器正常关闭，用于关闭日志片段。<br>默认情况下，每个日志目录仅使用一个线程。由于这些线程仅在服务器启动和崩溃时使用，所以可以设置大量的线程达到并行操作的目的。这样一旦某个服务器发生崩溃，可以使用并行操作节约时间。注意配置时的数字对应的是 log.dirs 指定的单个日志目录，即如果 log.dirs 指定了3个路径，num.recovery.threads.per.data.dir 被设为 8，则总共需要 24 个线程。|
-|auto.create.topics.enable|默认情况下，Kafka 会采用3种方式创建 Topic：<li>当一个生产者开始往主题写入消息时<li>当一个消费者开始从主题读取消息时<li>当任意一个客户端向主题发送元数据请求时<br>auto.create.topics.enable 参数建议设置成 false，即不允许自动创建 Topic|
+|高可用和副本参数|说明|示例|
+|-|-|-|
+|default.replication.factor|默认副本数（创建主题时未指定则使用此值）。|默认值：1，生产环境建议 3，确保冗余|
+|min.insync.replicas|最小同步副本数（ISR），影响生产者 acks=all 时的可用性。|默认值：1|
+|unclean.leader.election.enable|是否允许非同步副本（非 ISR）成为 Leader。|默认 false，保持 false，避免数据不一致。|
+|controller.socket.timeout.ms|控制器（Controller）与 Broker 通信的超时时间（毫秒）。|默认值：30000 (30秒)，网络不稳定时适当增大|
+|offsets.topic.replication.factor|__consumer_offsets 主题的副本数。|默认值：3，保持和default.replication.factor 一致。|
+|auto.create.topics.enable|是否允许自动创建 Topic|默认情况下，Kafka 会采用3种方式创建 Topic：<li>当一个生产者开始往主题写入消息时<li>当一个消费者开始从主题读取消息时<li>当任意一个客户端向主题发送元数据请求时<br>auto.create.topics.enable 参数建议设置成 false，即不允许自动创建 Topic|
 
 
-#### 2.6.3 Controller
+
+#### 2.6.2、Controller
 
 > Controller：是 Kafka 集群中的一个特殊的 Broker，它除了像普通 Broker那样对外提供消息的生产、消费、同步功能外，还额外承担了管理 Kafka 集群的 Broker、Topic、分区等职责。
 
@@ -599,7 +606,9 @@ Controller 负责管理这些元数据，那么它与 Zookeeper 的元数据管�
 
 > 副本优先机制：当分区 Leader 所在的 Broker 挂掉之后，Controller 会从每个 Partition 的 ISR 中取出第一个 Broker 里面的 Follower 作为 Leader。
 
-#### 分区的构成 Segment 文件
+![Leader选举流程](https://img2022.cnblogs.com/blog/2591061/202211/2591061-20221114082550997-1908598791.png)
+
+#### 2.6.3、分区的构成 Segment 文件
 
 一个 Partition 当中由多个 Segment 文件组成，每个 Segment 文件，包含两部分，一个是 .log 文件，另外一个是 .index 文件，其中 .log 文件包含了发送的数据存储，.index 文件，记录的是 .log 文件的数据索引值，以便于加快数据的查询速度。
 
@@ -611,7 +620,7 @@ Controller 负责管理这些元数据，那么它与 Zookeeper 的元数据管�
 
 index 文件中并没有为数据文件中的每条消息都建立索引，而是采用了稀疏存储的方式，每隔一定字节的数据建立一条索引。这样避免了索引文件占用过多的空间，从而可以将索引文件保留在内存中，通过内存映射（mmap）直接进行内存映射。但缺点是没有建立索引的 Message 也不能一次定位到其在数据文件的位置，从而需要做一次顺序扫描，但是这次顺序扫描的范围就很小了。
 
-##### segment文件命名规则
+##### segment 文件命名规则
 Partition 全局的第一个 Segment 从0开始，后续每个 Segment 文件名为上一个全局 Partition 的最大 offset（偏移 Message 数）。数值最大为64位long大小，20位数字字符长度，没有数字就用 0 填充。
 
 通过索引信息可以快速定位到 Message。通过 .index 元数据全部映射到内存，可以避免 Segment File的 IO 磁盘操作；通过索引文件稀疏存储，可以大幅降低 .index 文件元数据占用空间大小。
@@ -661,10 +670,74 @@ ISR，表示和 Leader 保持同步的 Follower 集合。如果 Follower 长时�
 
 OSR，表示Follower与Leader副本同步时，延迟过多的副本
 
+##### Leader 的选举
+
+由于 Controller 监听了很多的 Zookeeper 结点，所以能够感知到 Broker 的存活。
+
+
+> 副本优先机制：当分区 Leader 所在的 Broker 挂掉之后，Controller 会从每个 Partition 的 ISR 中取出第一个 Broker 里面的 Follower 作为 Leader。
+
+![Leader选举流程](https://img2022.cnblogs.com/blog/2591061/202211/2591061-20221114082550997-1908598791.png)
+
+##### Leader 和 Follower 故障处理
+
+首先介绍两个术语
+
+> LEO（Log End Offset）：每个副本的最后一个 Offset，LEO 就是最新的 Offset + 1
+
+> HW（High Watermark）：所有副本中最小的 LEO。
+
+Follower 故障处理机制：
+1. Follower 被临时踢出 ISR
+2. 这个期间 Leader 和 Follower 继续接收数据
+![](https://img2022.cnblogs.com/blog/2591061/202211/2591061-20221114224019861-1484196173.png)
+3. 待该 Follower 恢复后，Follower 会读取本地磁盘记录上次的 HW，并将 log 文件高于 HW 的部分截取掉，从 HW 开始向 Leader 进行同步。
+![](https://img2022.cnblogs.com/blog/2591061/202211/2591061-20221114224233127-2143699298.png)
+4. 等该 Follower 的 LEO 大于等于该 Partition 的 HW，即 Follower 追上 Leader 之后，就可以重新加入 ISR 了。
+![](https://img2022.cnblogs.com/blog/2591061/202211/2591061-20221114224316112-1183425314.png)
+
+
+Leader 故障处理机制：
+1. Leader发生故障之后，会从ISR中选出一个新的Leader。
+![](https://img2022.cnblogs.com/blog/2591061/202211/2591061-20221114224625266-595379941.png)
+2. 为保证多个副本之间的数据一致性，其余的 Follower 会先将各自的 log 文件高于 HW 的部分截掉，然后从新的 Leader 同步数据。
+![](https://img2022.cnblogs.com/blog/2591061/202211/2591061-20221114224746215-433624397.png)
+注意：这只能保证副本之间的数据一致性，并不能保证数据不丢失或者不重复。
+
+
 #### 2.6.3 文件存储
 
+Topic 是逻辑上的概念，而 Partition 是物理上的概念，每个 partition 对应于一个 log 文件，该 log 文件中存储的就是Producer 生产的数据。Producer 生产的数据会被不断追加到该 log 文件末端。为防止 log 文件过大导致数据定位效率低下，Kafka采取了分片和索引机制，将每个 partition 分为多个 segment。每个 Segment 文件，包含三部分，一个是 .log 文件，一个是 .index 文件，还有一个是 .timeindex 文件，其中 .log 文件包含了发送的数据存储，.index 文件，记录的是 .log 文件的数据索引值，以便于加快数据的查询速度，.timeindex 文件是时间戳索引文件。
 
+![](https://img2022.cnblogs.com/blog/2591061/202211/2591061-20221114230343330-264829160.png)
 
+这些文件位于一个文件夹下，该文件夹的命名规则为：topic名称+分区序号，例如：first-0。
+
+![.log 和 .index 文件](https://ask.qcloudimg.com/http-save/2039230/002wqqdvqv.png)
+
+如上图，左半部分是索引文件 .index ，里面存储的是一对一对的 key-value ，其中 key 是消息在数据文件（对应的 .log 文件）中的编号，比如“1,3,6,8……”，分别表示在log文件中的第1条消息、第3条消息、第6条消息、第8条消息……
+
+比如索引文件中 3,497 代表：数据文件中的第三个 Message，它的偏移地址为497。再来看数据文件中，Message 368772表示：在全局 Partiton 中是第368772个 Message。
+
+index 文件中并没有为数据文件中的每条消息都建立索引，而是采用了稀疏存储的方式，每隔一定字节的数据建立一条索引。这样避免了索引文件占用过多的空间，从而可以将索引文件保留在内存中，通过内存映射（mmap）直接进行内存映射。但缺点是没有建立索引的 Message 也不能一次定位到其在数据文件的位置，从而需要做一次顺序扫描，但是这次顺序扫描的范围就很小了。
+
+##### segment文件命名规则
+Partition 全局的第一个 Segment 从0开始，后续每个 Segment 文件名为上一个全局 Partition 的最大 offset（偏移 Message 数）。数值最大为64位long大小，20位数字字符长度，没有数字就用 0 填充。
+
+通过索引信息可以快速定位到 Message。通过 .index 元数据全部映射到内存，可以避免 Segment File的 IO 磁盘操作；通过索引文件稀疏存储，可以大幅降低 .index 文件元数据占用空间大小。
+
+> 稀疏索引：为了数据创建索引，但范围并不是为每一条创建，而是为某一个区间创建；
+
+- 优点：就是可以减少索引值的数量。
+- 缺点：找到索引区间之后，要得进行第二次处理。
+
+##### 、Message 的结构
+
+生产者发送到 Kafka 的消息，都被 Kafka 包装成了 Message。
+
+![Message的物理结构](https://ask.qcloudimg.com/http-save/2039230/5q1z5tmizh.png)
+
+每条消息都被包装成上图这个结构，只有最后一个字段才是真正生产者发送的消息数据。
 
 
 ### 2.7、消费者 Consumer
