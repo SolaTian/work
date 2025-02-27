@@ -1,18 +1,56 @@
 # Kafka
 
-- [Kafka 基本概念](#1kafka基本概念)
-  - [什么是 Kafka](#11什么是kafka)
-    - [消息系统](#111消息系统)
-    - [发布订阅式和点对点式](#112发布-订阅式与点对点式)
-  - [Kafka 的组成](#12kafka的组成)
-  - 
-- [Kafka 原理](#2kafka-原理)
-  - [Kafka 的管理和支持——Zookeeper](#21kafka-的管理和支持zookeeper)
-  - [Broker 端配置](#22broker-端配置)
-  - [Topic 和 Log](#23topic-和-log)
-  - [Broker 的领导者——Controller](#24broker-的领导者controller)
-  - [](#25生产者-producer)
-  - [](#26消费者-consumer)
+- [Kafka](#kafka)
+  - [1、Kafka 基本概念](#1kafka-基本概念)
+    - [1.1、什么是 Kafka](#11什么是-kafka)
+      - [1.1.1、消息系统](#111消息系统)
+      - [1.1.2、发布-订阅式与点对点式](#112发布-订阅式与点对点式)
+    - [1.2、Kafka的组成](#12kafka的组成)
+    - [1.3、Kafka的特点](#13kafka的特点)
+  - [2、Kafka 原理](#2kafka-原理)
+    - [2.1、Kafka 的管理和支持——Zookeeper](#21kafka-的管理和支持zookeeper)
+    - [2.2、生产者 Producer](#22生产者-producer)
+      - [2.2.1、数据生产流程](#221数据生产流程)
+      - [2.2.2、创建生产者](#222创建生产者)
+      - [2.2.3、生产者消息发送流程](#223生产者消息发送流程)
+        - [main 线程](#main-线程)
+          - [Producer 拦截器](#producer-拦截器)
+          - [Serializer 序列化器](#serializer-序列化器)
+          - [Partitioner 分区器](#partitioner-分区器)
+          - [消息累加器 RecordAccumulator](#消息累加器-recordaccumulator)
+        - [sender 线程](#sender-线程)
+          - [发后即忘方式](#发后即忘方式)
+          - [同步消息发送](#同步消息发送)
+          - [异步消息发送](#异步消息发送)
+          - [三种发送方式的特点对比](#三种发送方式的特点对比)
+      - [2.2.4、重要生产者参数](#224重要生产者参数)
+    - [2.3、节点 Broker](#23节点-broker)
+      - [2.3.1、Broker 工作流程](#231broker-工作流程)
+      - [2.3.2、Controller](#232controller)
+        - [Controller 的选举过程](#controller-的选举过程)
+        - [Controller的职责](#controller的职责)
+      - [2.3.3、Topic](#233topic)
+      - [2.3.4、Replica 副本](#234replica-副本)
+        - [Leader 的选举](#leader-的选举)
+        - [Leader 和 Follower 故障处理](#leader-和-follower-故障处理)
+      - [2.3.5、文件存储](#235文件存储)
+        - [Segment 文件命名规则](#segment-文件命名规则)
+        - [Message 的结构](#message-的结构)
+        - [文件清理策略](#文件清理策略)
+      - [2.3.6、高效读写数据](#236高效读写数据)
+      - [2.3.7、Broker 参数](#237broker-参数)
+    - [2.4、消费者 Consumer](#24消费者-consumer)
+      - [2.4.1、消费者组和分区重平衡](#241消费者组和分区重平衡)
+        - [重平衡的优缺点](#重平衡的优缺点)
+      - [2.4.2、 创建消费者](#242-创建消费者)
+        - [主题订阅](#主题订阅)
+        - [轮询消费](#轮询消费)
+      - [2.4.3、消费者的配置](#243消费者的配置)
+      - [2.4.5、提交和偏移量](#245提交和偏移量)
+        - [自动提交](#自动提交)
+        - [手动提交](#手动提交)
+        - [指定 offset 消费](#指定-offset-消费)
+        - [重复消费和漏消费](#重复消费和漏消费)
 ## 1、Kafka 基本概念
 
 ### 1.1、什么是 Kafka
@@ -21,7 +59,7 @@
 
 那么有个问题，什么是**消息系统**？
 
-### 1.1.1、消息系统
+#### 1.1.1、消息系统
 
 消息系统：又叫消息中间件，负责将数据从一个应用传递到另一个应用，应用只需关注数据，无需关注数据在两个或者多个应用之间是如何传递的。
 
@@ -38,7 +76,7 @@
 
 那么什么是**发布-订阅**呢？
 
-### 1.1.2、发布-订阅式与点对点式
+#### 1.1.2、发布-订阅式与点对点式
 
 消息系统的消息传递模式分为两种：一种是点对点（Point to Point,P2P）式，还有一种就是发布-订阅式，上面介绍的`RabbitMQ`和`ActiveMQ`就属于点对点式。
 
@@ -84,62 +122,8 @@ Kafka 由以下部分组成：
 |消息`message`|`Kafka`的数据单元称作消息，消息在文件中的位置称为`Offset`，`Offset`唯一标记一条`Message`|由字节数组成|
 |批次`batch`|批次就是一组消息|同属于一个`Broker`和`Partition`|
 |`Replica`副本|`Replica`是`Partition`的副本，用于实现数据的冗余和容错。每个`Partition`都有一个`Leader`副本和多个`Follower`副本。`Leader`副本负责处理读写请求(生产者发送数据的对象，消费者消费数据的对象)，`Follower`副本从`Leader`副本复制数据以保持数据一致性|当`Leader`副本出现故障时，`Kafka`会自动从`Follower`副本中选举出新的`Leader`副本，以保证服务的连续性|
+|消息偏移量`offset`|表示分区`Partition`中每条消息的位置信息|是一个单调递增且不变的值|
 |`Zookeeper`|`Zookeeper`不是`Kafka`的直接组成部分，但它在`Kafka`集群中扮演着至关重要的角色，管理`Kafka`集群的元数据（如`Broker`信息、`Topic`信息、`Partition`信息等），并协调`Broker`之间的交互和选举。|`Zookeeper`的高可用性和强一致性保证了`Kafka`集群的稳定性和可靠性|
-
-
-
-
-#### 1.2.2、Segment 文件
-
-##### .index 文件和 .log 文件
-一个 Partition 当中由多个 Segment 文件组成，每个 Segment 文件，包含两部分，一个是 .log 文件，另外一个是 .index 文件，其中 .log 文件包含了发送的数据存储，.index 文件，记录的是 .log 文件的数据索引值，以便于加快数据的查询速度。
-
-![.log 和 .index 文件](https://ask.qcloudimg.com/http-save/2039230/002wqqdvqv.png)
-
-如上图，左半部分是索引文件 .index ，里面存储的是一对一对的 key-value ，其中 key 是消息在数据文件（对应的 .log 文件）中的编号，比如“1,3,6,8……”，分别表示在log文件中的第1条消息、第3条消息、第6条消息、第8条消息……
-
-比如索引文件中 3,497 代表：数据文件中的第三个 Message，它的偏移地址为497。再来看数据文件中，Message 368772表示：在全局 Partiton 中是第368772个 Message。
-
-index 文件中并没有为数据文件中的每条消息都建立索引，而是采用了稀疏存储的方式，每隔一定字节的数据建立一条索引。这样避免了索引文件占用过多的空间，从而可以将索引文件保留在内存中，通过内存映射（mmap）直接进行内存映射。但缺点是没有建立索引的 Message 也不能一次定位到其在数据文件的位置，从而需要做一次顺序扫描，但是这次顺序扫描的范围就很小了。
-
-##### segment文件命名规则
-Partition 全局的第一个 Segment 从0开始，后续每个 Segment 文件名为上一个全局 Partition 的最大 offset（偏移 Message 数）。数值最大为64位long大小，20位数字字符长度，没有数字就用 0 填充。
-
-通过索引信息可以快速定位到 Message。通过 .index 元数据全部映射到内存，可以避免 Segment File的 IO 磁盘操作；通过索引文件稀疏存储，可以大幅降低 .index 文件元数据占用空间大小。
-
-> 稀疏索引：为了数据创建索引，但范围并不是为每一条创建，而是为某一个区间创建；
-
-- 优点：就是可以减少索引值的数量。
-- 缺点：找到索引区间之后，要得进行第二次处理。
-
-
-#### 1.2.3、Message 的结构
-
-生产者发送到 Kafka 的消息，都被 Kafka 包装成了 Message。
-
-![Message的物理结构](https://ask.qcloudimg.com/http-save/2039230/5q1z5tmizh.png)
-
-每条消息都被包装成上图这个结构，只有最后一个字段才是真正生产者发送的消息数据。
-
-#### 1.2.4、Kafka 分区副本
-
-![](https://ask.qcloudimg.com/http-save/2039230/x8v603d95o.png)
-
-
-> 副本 Replica：控制消息保存在几个 broker 上，一般情况下副本数小于等于 broker 的个数。
-
-副本操作是以分区 Partition 为单位的。每个分区都有各自的 1 个主副本 Leader 和 N 个从副本 Follower；
-
-以下是分区副本的概念
-1. AR：分区中所有副本统称为AR(Assigned Replicas)；
-2. ISR：所有与 Leader 副本保持一定程度同步的副本（包括 leader 副本）组成 ISR (In-Sync Replicas)，即当前可用的副本。
-3. 与 Leader 副本同步之后过多的副本（不包括 Leader 副本）组成 OSR(Out-of-Sync Replicas)。 AR=ISR+OSR ，正常情况下 AR=ISR。
-
-Follower 通过拉的方式从 Leader 同步数据。
-
-注意：
-- 消费者和生产者都是从 Leader 读写数据，不与 Follower 交互。
-- 同一个副本不能放在同一个 Broker 中。
 
 
 
@@ -166,10 +150,7 @@ Follower 通过拉的方式从 Leader 同步数据。
 
 ## 2、Kafka 原理
 
-要真正吃透`Kafka`的底层原理很不容易。这里也只是大概的介绍一下`Kafka`的大致工作原理。
-
-除了之前提到的`Kafka`的组成，在介绍原理之前，还有几个术语需要介绍一下
-- 消息偏移量`offset`：表示分区`Partition`中每条消息的位置信息，是一个单调递增且不变的值。
+下面一张图是 Kafka 的基本架构，后面会从这张图出发，对 Kafka 进行深入了解。
 
 ![Kafka基础架构](https://img2022.cnblogs.com/blog/2591061/202211/2591061-20221113155143571-1630948393.png)
 
@@ -190,108 +171,7 @@ Follower 通过拉的方式从 Leader 同步数据。
 `Zookeeper`和`Kafka`的关系好比是，管理者和打工仔的关系，`Zookeeper`负责全局的协调和管理，`Kafka`负责处理具体的事务，相互协调使得分布式系统稳定运行。
 
 
-### 2.2、Broker 端配置
-
-Broker 有一些重要的参数，主要是在 server.properties 配置文件中设置的。这个文件是每个 Kafka Broker 节点的核心配置文件，通常位于 Kafka 安装目录下的 config 目录中，下面详细说明
-
-|Broker 参数|说明|
-|-|-|
-|broker.id|每个 Kafka Broker 的唯一标识符|
-|listeners|指定 Kafka Broker 启动时监听的协议和端口。格式为 `protocol://host:port`。如果要配置多个监听器，可以使用逗号分隔，如果使用配置样本启动 Kafka，会监听 9092 端口，例如 `listeners=PLAINTEXT://localhost:9092`|
-|zookeeper connect|用于保存 Broker 元数据的 Zookeeper 地址是通过 zookeeper.connect 来指定的。如指定 localhost:2181 则表示这个 Zookeeper 是运行在本地 2181 端口上的。如通过 zk1:2181,zk2:2181,zk3:2181 来指定 zookeeper.connect 的多个参数值。该配置参数是用冒号分割的一组 hostname:port/path 列表，其含义如下:<li>hostname 是 Zookeeper 服务器的机器名或者 ip 地址；<li>port 是 Zookeeper 客户端的端口号;<li>/path 是可选择的 Zookeeper 路径，如果不指定默认使用根路径|
-|log.dirs|Kafka 把所有的消息都保存到磁盘上，存放这些日志片段的目录是通过 log.dirs 来制定的，它是用一组逗号来分割的本地系统路径，log.dirs 是没有默认值的，必须手动指定。比如通过 /home/kafka1,/home/kafka2,/home/kafka3 这样来配置这个参数的值|
-|num.recovery.threads.per.data.dir|以下 3 种情况，Kafka 会使用可配置的线程池来处理日志片段<li>服务器正常启动，用于打开每个分区的日志片段；<li>服务器崩溃后重启，用于检查和截断每个分区的日志片段；<li>服务器正常关闭，用于关闭日志片段。<br>默认情况下，每个日志目录仅使用一个线程。由于这些线程仅在服务器启动和崩溃时使用，所以可以设置大量的线程达到并行操作的目的。这样一旦某个服务器发生崩溃，可以使用并行操作节约时间。注意配置时的数字对应的是 log.dirs 指定的单个日志目录，即如果 log.dirs 指定了3个路径，num.recovery.threads.per.data.dir 被设为 8，则总共需要 24 个线程。|
-|auto.create.topics.enable|默认情况下，Kafka 会采用3种方式创建 Topic：<li>当一个生产者开始往主题写入消息时<li>当一个消费者开始从主题读取消息时<li>当任意一个客户端向主题发送元数据请求时<br>auto.create.topics.enable 参数建议设置成 false，即不允许自动创建 Topic|
-
-除此之外还有很多参数，具体遇到可以自行搜索参数含义。
-
-### 2.3、Topic 和 Log
-
-Topic 有很多配置参数，有以下几种方式可以设置
-- 创建 Topic 时的参数配置
-- Kafka 的配置工具 kafka-topics.sh 中修改
-- 通过 server.properties 中的默认配置
-
-下面详细说明
-
-|Topic 参数|说明|
-|-|-|
-|log.retention.ms|消息的保留时间，单位毫秒。超过该时间的消息将被删除。默认值是 7 天（168 hours）。|
-|log.retention.bytes|另一种保留消息的方式是判断消息是否超过限制大小。它的值通过参数 log.retention.bytes 来指定，作用在每一个分区上。也就是说，如果有一个包含 8 个分区的主题，并且 log.retention.bytes 被设置为 1GB，那么这个主题最多可以保留 8GB 数据。所以，当主题的分区个数增加时，整个主题可以保留的数据也随之增加。|
-|num.partitions|指定新创建的主题需要包含多少个分区，如果启用了主题自动创建功能（该功能是默认启用的），主题分区的个数就是该参数指定的值。该参数的默认值是 1。要注意，可以增加主题分区的个数，但不能减少分区的个数。|
-|message.max.bytes|broker 通过设置 message.max.bytes 参数来限制单个消息的大小，默认是 1000 000， 也就是 1MB，如果生产者尝试发送的消息超过这个大小，不仅消息不会被接收，还会收到 broker 返回的错误消息。跟其他与字节相关的配置参数一样，该参数指的是压缩后的消息大小，也就是说，只要压缩后的消息小于 mesage.max.bytes，那么消息的实际大小可以大于这个值。这个值对性能有显著的影响。值越大，那么负责处理网络连接和请求的线程就需要花越多的时间来处理这些请求。它还会增加磁盘写入块的大小，从而影响 IO 吞吐量。|
-|log.segment.bytes|当消息到达 broker 时，它们被追加到分区的当前日志片段上，当日志片段大小到达 log.segment.bytes 指定上限（默认为 1GB）时，当前日志片段就会被关闭，一个新的日志片段被打开。如果一个日志片段被关闭，就开始等待过期。这个参数的值越小，就越会频繁的关闭和分配新文件，从而降低磁盘写入的整体效率。|
-|log.segment.ms|指定日志多长时间被关闭的参数和，log.segment.ms 和 log.retention.bytes 也不存在互斥问题。日志片段会在大小或时间到达上限时被关闭，就看哪个条件先得到满足|
-
-#### log
-
-每个分区，Kafka 都会维护一个 Log
-
-
-### 2.4、Broker 的领导者——Controller
-
-> Controller：是 Kafka 集群中的一个特殊的 Broker，它除了像普通 Broker那样对外提供消息的生产、消费、同步功能外，还额外承担了管理 Kafka 集群的 Broker、Topic、分区等职责。
-
-Controller 负责管理这些元数据，那么它与 Zookeeper 的元数据管理有什么区别？
-
-- Zookeeper：核心职责是可靠存储元数据和通知变更（通过 Watcher ）。它是被动的存储系统，不参与决策。
-- Controller：作为集群的“大脑”，主动管理状态（如故障恢复、副本均衡）和执行决策（如 Leader 选举），并将结果持久化到 Zookeeper。
-
-在后续新版的 Kafka 中，使用 KRaft 代替了 Zookeeper，实现了元数据管理的去中心化和性能优化。
-
-
-#### 2.4.1、Controller 的选举过程
-
-`Kafka`集群中的每一个`Broker`都有可能成为`Controller`，具体的选举依赖于`Zookeeper`。
-
-选举流程：
-
-1. 候选者注册：在`Kafka`集群启动时，每个`Broker`都有可能成为`Controller`的候选者。各候选者会尝试在`Zookeeper`中创建临时有序临时节点（通常是`/controller`）来表明自己的参与。这些节点是临时的，意味着当`Broker`宕机或退出集群时，相应的节点会被自动删除。
-  
-2. 节点的排序与选举：`Zookeeper`对候选者结点进行排序，具有最小序号的节点成为新的`Controller`，如果多个候选者具有相同的最小序号，那么`Zookeeper`会根据节点的创建时间来选择最终的`Controller`，采用的是“先到先得”的抢占模式，`Zookeeper`会保证有且仅有一个`Broker`能创建成功，这个`Broker`就会成为集群的总控器`Controller`成功创建节点的 `Broker`将自己的`ID`、版本号等信息写入`/controller`节点。例如，节点内容可能为：`{"version":1, "brokerid":1001, "timestamp":"..."}`；
-
-3. 选举完成：一旦选举完成，新的`Controller`节点将被选出，并且其他候选者`Broker`将知道哪个节点成为了新的`Controller`(监听机制)。新的`Controller`节点将负责管理`Kafka`集群的状态、执行分区分配、`Leader`选举等操作，会向`Zookeeper`中写入`epoch`值，即`Controller`的版本号，其余`Broker`在接收元数据变更时，会校验该版本号，拒绝旧的`Controller`的指令；
-
-4. 故障转移和重新选举：当前的`Controller`节点发生故障或失效时，原先的`/controller`结点失效，`Kafka`集群会自动触发`Controller`的重新选举过程。这个过程由`Zookeeper`的临时节点和节点监听机制来保证。新的`Controller`候选者将尝试在`Zookeeper`中创建临时有序节点，参与新一轮的`Controller`选举过程。`ZooKeeper`将重新处理候选者节点，选举出新的`Controller`节点并更新`epoch`值，并接管集群管理任务，确保`Kafka`集群的正常运行和高可用性。
-
-
-#### 2.4.2、Controller的职责
-
-1. 集群的状态管理：
-   1. 为`Zookeeper`中的`/brokers/ids/`节点添加`BrokerChangeListener`，用来处理`Broker`增减的变化。监控集群中`Broker`的增减变化，包括处理`Broker`的加入，主动关闭和宕机，`Controller`需要及时更新集群元数据，并将集群变化通知到所有的`Broker`集群节点；
-   2. 分区与副本管理：`Controller`负责管理和监控集群中所有分区的状态，包括`Topic`分区的创建、删除、状态转换以及副本的选举和状态更新。它通过`ZooKeeper`来协调这些任务，确保分区和副本的高可用性和一致性;
-
-2. 元数据管理：`Controller`还负责维护集群的元数据信息，从`Zookeeper`中读取和更新集群的元数据信息，如`Topic`的分区信息、每个分区的`Leader`副本信息。当集群中的元数据发生变化时，`Controller`会及时更新集群元数据并将更新后的信息同步给集群中的所有`Broker`，确保每个`Broker`都能获取到最新的元数据信息；
-
-3. 故障切换与内容复制：当分区的`Leader`副本发生故障时，`Controller`负责进行故障切换，选举新的`Leader`副本，并确保数据的正确复制和同步；
-
-
-`Kafka`分区和副本数据采用状态机方式进行管理，分区和副本的变化都在状态机内会引起状态机状态的变更，从而触发相应的变化事件：
-
-- 分区状态机（管理 Topic 的分区，它有以下 4 种状态）：
-  - NonExistentPartition：该状态表示分区没有被创建过或创建后被删除了
-  - NewPartition：分区刚创建后，处于这个状态。此状态下分区已经分配了副本，但是还没有选举`leader`，也没有`ISR`列表
-  - OnlinePartition：一旦这个分区的`leader`被选举出来，将处于这个状态
-  - OfflinePartition：当分区的`leader`宕机，转移到这个状态
-![分区状态机的切换](https://s6.51cto.com/oss/202104/09/f4d16e834f83f10f4f2cb4b860da35e9.png)
-
-- 副本状态机（副本状态，管理分区副本信息，它也有 4 种状态）：
-  - NewReplica: 创建`topic`和分区分配后创建`replicas`，此时，`replica`只能获取到成为`follower`状态变化请求。
-  - OnlineReplica: 当`replica`成为`parition`的`assingned replicas`时，其状态变为 OnlineReplica, 即一个有效的OnlineReplica。
-  - OfflineReplica: 当一个`replica`下线，进入此状态，这一般发生在`broker`宕机的情况下
-  - NonExistentReplica: `Replica` 成功删除后，`replica` 进入 NonExistentReplica 状态
-
-![副本状态机的切换](https://s2.51cto.com/oss/202104/09/de8f7c8bd4557cb535c4bf70d2afe0f6.png)
-
-#### 2.4.3、Leader 的选举
-
-由于 Controller 监听了很多的 Zookeeper 结点，所以能够感知到 Broker 的存活。
-
-
-> 副本优先机制：当分区 Leader 所在的 Broker 挂掉之后，Controller 会从每个 Partition 的 ISR 中取出第一个 Broker 里面的 Follower 作为 Leader。
-
-
-### 2.5、生产者 Producer
+### 2.2、生产者 Producer
 
 正常的生产逻辑：
 - 配置生产者客户端参数和创建相应的生产者实例
@@ -299,14 +179,10 @@ Controller 负责管理这些元数据，那么它与 Zookeeper 的元数据管�
 - 发送消息
 - 关闭生产者实例
 
-#### 2.5.1、数据生产流程
+#### 2.2.1、数据生产流程
 
 
 ![数据生产流程](https://img2022.cnblogs.com/blog/2742789/202202/2742789-20220228223715656-1782209181.png)
-
-
-
-
 
 对于一条记录，先对其进行序列化，然后根据 Topic 和 Partition，放进对应的发送队列中。如果 Partition 没填，分为两种情况：
 - Key 有值，按照 Key 进行哈希，相同 Key 去一个Partition
@@ -314,7 +190,7 @@ Controller 负责管理这些元数据，那么它与 Zookeeper 的元数据管�
 
 Producer 将会和 Topic 下所有 Partition Leader 保持 socket 连接，消息由 Producer 直接通过socket 发送到 Broker。其中 Partition Leader的位置注册在Zookeeper中，Producer作为Zookeeper Client，已经注册了 watch 用来监听 Partition Leader 的变更事件，因此，可以准确的知道谁是当前的 leader。
 
-#### 2.5.2、创建生产者
+#### 2.2.2、创建生产者
 
 要想 Kafka 中写入消息，首先需要创建一个生产者对象。Kafka 生产者有3个必选属性
 
@@ -330,7 +206,7 @@ Producer 将会和 Topic 下所有 Partition Leader 保持 socket 连接，消�
         properties.put("value.serializer","org.apache.kafka.common.serialization.StringSerializer");
         properties = new KafkaProducer<String,String>(properties);
 
-#### 2.5.3、生产者消息发送流程
+#### 2.2.3、生产者消息发送流程
 
 消息发送过程中涉及到 2 个线程。`main`线程和`Sender`线程。在`main`线程中创建了一个双端队列 RecordAccumulator。 `main`线程将消息发送给`RecordAccumulator`，`Sender`线程不断从 RecordAccumulator 中拉取消息发送到 Kafka Broker。
 
@@ -415,7 +291,7 @@ Producer 将会和 Topic 下所有 Partition Leader 保持 socket 连接，消�
 |异步发送|吞吐量高|可靠性中等|
 
 
-#### 2.5.4、重要生产者参数
+#### 2.2.4、重要生产者参数
 
 上面大致介绍了 Kafka 生产者生产和发送消息的流程，下面分类介绍一些生产者的重要参数。
 
@@ -480,9 +356,10 @@ Producer 将会和 Topic 下所有 Partition Leader 保持 socket 连接，消�
     max.in.flight.requests.per.connection=5
     request.timeout.ms=5000
 
-### 2.6 节点 Broker
 
-#### Broker 工作流程
+### 2.3、节点 Broker
+
+#### 2.3.1、Broker 工作流程
 
 Broker 的工作流程如下：
 
@@ -503,49 +380,7 @@ Broker 的工作流程如下：
 
 下面开始逐一介绍其中涉及到的知识点
 
-#### 2.6.1、Broker 参数
-
-Broker 有一些重要的参数，主要是在 server.properties 配置文件中设置的。这个文件是每个 Kafka Broker 节点的核心配置文件，通常位于 Kafka 安装目录下的 config 目录中，下面详细说明
-
-|基础参数|说明|示例|
-|-|-|-|
-|broker.id|每个 Kafka Broker 的唯一标识符|整数，通常按照顺序分配|
-|listeners|指定 Kafka Broker 启动时监听的协议和端口。|格式为 `protocol://host:port`。如果要配置多个监听器，可以使用逗号分隔，如果使用配置样本启动 Kafka，会监听 9092 端口，例如 `listeners=PLAINTEXT://localhost:9092`|
-|zookeeper connect|用于保存 Broker 元数据的 Zookeeper 地址是通过 zookeeper.connect 来指定的。|如指定 `localhost:2181` 则表示这个 Zookeeper 是运行在本地 2181 端口上的。如通过 `zk1:2181,zk2:2181,zk3:2181` 来指定 zookeeper.connect 的多个参数值。该配置参数是用冒号分割的一组 `hostname:port/path` 列表，其含义如下:<li>`hostname` 是 Zookeeper 服务器的机器名或者 ip 地址；<li>`port` 是 Zookeeper 客户端的端口号;<li>`/path` 是可选择的 Zookeeper 路径，如果不指定默认使用根路径|
-
-
-|性能优化参数|说明|示例|
-|-|-|-|
-|num.network.threads|处理网络请求的线程数（接收客户端请求）。|根据 CPU 核心数和网络负载调整（通常设为 CPU 核心数的 1.5-2 倍）|
-|num.io.threads|负责写磁盘的线程数。整个参数值要占总核数的50%。|默认值：8|
-|num.replica.fetchers|副本从 Leader 同步数据的线程数。|这个参数占总核数的50%的1/3 。|
-|log.flush.interval.messages|累积多少条消息后刷新到磁盘|可靠性要求高时设为较小值（如 10000），但会降低吞吐量。|
-|log.flush.interval.ms|每隔多久，刷数据到磁盘。|默认是null。一般不建议修改，交给系统自己管理。|
-|socket.send.buffer.bytes / socket.receive.buffer.bytes|TCP 发送/接收缓冲区大小（字节）。|网络带宽高时增大（如 1MB）|
-
-|存储管理参数|说明|示例|
-|-|-|-|
-|log.dirs|Kafka 把所有的消息都保存到磁盘上，存放这些日志片段的目录是通过 log.dirs 来制定的，它是用一组逗号来分割的本地系统路径。|log.dirs 是没有默认值的，必须手动指定。比如通过 `/home/kafka1,/home/kafka2,/home/kafka3` 这样来配置这个参数的值|
-|log.retention.hours|日志保留时间（小时）|默认：168 (7天)	根据存储容量和业务需求调整（如 72 小时）。|
-|log.retention.bytes|单个分区的最大日志大小（字节），超过则删除旧数据。|默认等于-1，表示无穷大。结合 log.retention.hours 使用|
-|log.segment.bytes|单个日志段文件的大小（字节）。|默认值：1073741824 (1GB)	增大可减少段文件数量，但延长索引重建时间（建议 1-10GB）。|
-|log.index.interval.bytes|kafka里面每当写入了指定大小的日志（.log），然后就往 index 文件里面记录一个索引。稀疏索引。|默认4kb|
-|log.cleanup.policy |日志清理策略。|默认值：delete。<li>delete：基于时间或大小删除。<li>compact：压缩保留最新键值。<br>需要保留键最新值时设为 compact（如事务日志）。|
-|num.recovery.threads.per.data.dir|以下 3 种情况，Kafka 会使用可配置的线程池来处理日志片段<li>服务器正常启动，用于打开每个分区的日志片段；<li>服务器崩溃后重启，用于检查和截断每个分区的日志片段；<li>服务器正常关闭，用于关闭日志片段。<br>默认情况下，每个日志目录仅使用一个线程。由于这些线程仅在服务器启动和崩溃时使用，所以可以设置大量的线程达到并行操作的目的。这样一旦某个服务器发生崩溃，可以使用并行操作节约时间。|注意配置时的数字对应的是 log.dirs 指定的单个日志目录，即如果 log.dirs 指定了3个路径，num.recovery.threads.per.data.dir 被设为 8，则总共需要 24 个线程。|
-
-
-|高可用和副本参数|说明|示例|
-|-|-|-|
-|default.replication.factor|默认副本数（创建主题时未指定则使用此值）。|默认值：1，生产环境建议 3，确保冗余|
-|min.insync.replicas|最小同步副本数（ISR），影响生产者 acks=all 时的可用性。|默认值：1|
-|unclean.leader.election.enable|是否允许非同步副本（非 ISR）成为 Leader。|默认 false，保持 false，避免数据不一致。|
-|controller.socket.timeout.ms|控制器（Controller）与 Broker 通信的超时时间（毫秒）。|默认值：30000 (30秒)，网络不稳定时适当增大|
-|offsets.topic.replication.factor|__consumer_offsets 主题的副本数。|默认值：3，保持和default.replication.factor 一致。|
-|auto.create.topics.enable|是否允许自动创建 Topic|默认情况下，Kafka 会采用3种方式创建 Topic：<li>当一个生产者开始往主题写入消息时<li>当一个消费者开始从主题读取消息时<li>当任意一个客户端向主题发送元数据请求时<br>auto.create.topics.enable 参数建议设置成 false，即不允许自动创建 Topic|
-
-
-
-#### 2.6.2、Controller
+#### 2.3.2、Controller
 
 > Controller：是 Kafka 集群中的一个特殊的 Broker，它除了像普通 Broker那样对外提供消息的生产、消费、同步功能外，还额外承担了管理 Kafka 集群的 Broker、Topic、分区等职责。
 
@@ -579,7 +414,7 @@ Controller 负责管理这些元数据，那么它与 Zookeeper 的元数据管�
 
 2. 元数据管理：`Controller`还负责维护集群的元数据信息，从`Zookeeper`中读取和更新集群的元数据信息，如`Topic`的分区信息、每个分区的`Leader`副本信息。当集群中的元数据发生变化时，`Controller`会及时更新集群元数据并将更新后的信息同步给集群中的所有`Broker`，确保每个`Broker`都能获取到最新的元数据信息；
 
-3. 故障切换与内容复制：当分区的`Leader`副本发生故障时，`Controller`负责进行故障切换，选举新的`Leader`副本，并确保数据的正确复制和同步；
+3. 故障切换与内容复制：当分区的`Leader`副本发生故障时，`Controller`负责进行故障切换，选举新的`Leader`副本，并确保数据的正确复制和同步，具体选举过程可以参考下面的[Leader 的选举](#leader-的选举)；
 
 
 `Kafka`分区和副本数据采用状态机方式进行管理，分区和副本的变化都在状态机内会引起状态机状态的变更，从而触发相应的变化事件：
@@ -599,47 +434,16 @@ Controller 负责管理这些元数据，那么它与 Zookeeper 的元数据管�
 
 ![副本状态机的切换](https://s2.51cto.com/oss/202104/09/de8f7c8bd4557cb535c4bf70d2afe0f6.png)
 
-##### Leader 的选举
+#### 2.3.3、Topic
 
-由于 Controller 监听了很多的 Zookeeper 结点，所以能够感知到 Broker 的存活。
+Topic 有很多配置参数，有以下几种方式可以设置
+- 创建 Topic 时的参数配置
+- Kafka 的配置工具 kafka-topics.sh 中修改
+- 通过 server.properties 中的默认配置
 
+Topic 是 Kafka中用于存储消息的逻辑分类，每个 Topic 都包含多个 partition ，用于分散消息的存储和消费。主题类似于数据库的表。
 
-> 副本优先机制：当分区 Leader 所在的 Broker 挂掉之后，Controller 会从每个 Partition 的 ISR 中取出第一个 Broker 里面的 Follower 作为 Leader。
-
-![Leader选举流程](https://img2022.cnblogs.com/blog/2591061/202211/2591061-20221114082550997-1908598791.png)
-
-#### 2.6.3、分区的构成 Segment 文件
-
-一个 Partition 当中由多个 Segment 文件组成，每个 Segment 文件，包含两部分，一个是 .log 文件，另外一个是 .index 文件，其中 .log 文件包含了发送的数据存储，.index 文件，记录的是 .log 文件的数据索引值，以便于加快数据的查询速度。
-
-![.log 和 .index 文件](https://ask.qcloudimg.com/http-save/2039230/002wqqdvqv.png)
-
-如上图，左半部分是索引文件 .index ，里面存储的是一对一对的 key-value ，其中 key 是消息在数据文件（对应的 .log 文件）中的编号，比如“1,3,6,8……”，分别表示在log文件中的第1条消息、第3条消息、第6条消息、第8条消息……
-
-比如索引文件中 3,497 代表：数据文件中的第三个 Message，它的偏移地址为497。再来看数据文件中，Message 368772表示：在全局 Partiton 中是第368772个 Message。
-
-index 文件中并没有为数据文件中的每条消息都建立索引，而是采用了稀疏存储的方式，每隔一定字节的数据建立一条索引。这样避免了索引文件占用过多的空间，从而可以将索引文件保留在内存中，通过内存映射（mmap）直接进行内存映射。但缺点是没有建立索引的 Message 也不能一次定位到其在数据文件的位置，从而需要做一次顺序扫描，但是这次顺序扫描的范围就很小了。
-
-##### segment 文件命名规则
-Partition 全局的第一个 Segment 从0开始，后续每个 Segment 文件名为上一个全局 Partition 的最大 offset（偏移 Message 数）。数值最大为64位long大小，20位数字字符长度，没有数字就用 0 填充。
-
-通过索引信息可以快速定位到 Message。通过 .index 元数据全部映射到内存，可以避免 Segment File的 IO 磁盘操作；通过索引文件稀疏存储，可以大幅降低 .index 文件元数据占用空间大小。
-
-> 稀疏索引：为了数据创建索引，但范围并不是为每一条创建，而是为某一个区间创建；
-
-- 优点：就是可以减少索引值的数量。
-- 缺点：找到索引区间之后，要得进行第二次处理。
-
-
-##### Message 的结构
-
-生产者发送到 Kafka 的消息，都被 Kafka 包装成了 Message。
-
-![Message的物理结构](https://ask.qcloudimg.com/http-save/2039230/5q1z5tmizh.png)
-
-每条消息都被包装成上图这个结构，只有最后一个字段才是真正生产者发送的消息数据。
-
-#### 2.6.2 Replica 副本
+#### 2.3.4、Replica 副本
 
 Kafka 副本作用：提高数据可靠性。
 
@@ -704,10 +508,11 @@ Leader 故障处理机制：
 ![](https://img2022.cnblogs.com/blog/2591061/202211/2591061-20221114224746215-433624397.png)
 注意：这只能保证副本之间的数据一致性，并不能保证数据不丢失或者不重复。
 
+#### 2.3.5、文件存储
 
-#### 2.6.3 文件存储
 
-Topic 是逻辑上的概念，而 Partition 是物理上的概念，每个 partition 对应于一个 log 文件，该 log 文件中存储的就是Producer 生产的数据。Producer 生产的数据会被不断追加到该 log 文件末端。为防止 log 文件过大导致数据定位效率低下，Kafka采取了分片和索引机制，将每个 partition 分为多个 segment。每个 Segment 文件，包含三部分，一个是 .log 文件，一个是 .index 文件，还有一个是 .timeindex 文件，其中 .log 文件包含了发送的数据存储，.index 文件，记录的是 .log 文件的数据索引值，以便于加快数据的查询速度，.timeindex 文件是时间戳索引文件。
+
+Topic 是逻辑上的概念，而 Partition 是物理上的概念，了解完基于 partition 的 Replica，再往深处了解一下 Partition。每个 partition 对应于一个 log 文件，该 log 文件中存储的就是Producer 生产的数据。Producer 生产的数据会被不断追加到该 log 文件末端。为防止 log 文件过大导致数据定位效率低下，Kafka采取了分片和索引机制，将每个 partition 分为多个 segment。每个 Segment 文件，包含三部分，一个是 .log 文件，一个是 .index 文件，还有一个是 .timeindex 文件，其中 .log 文件包含了发送的数据存储，.index 文件，记录的是 .log 文件的数据索引值，以便于加快数据的查询速度，.timeindex 文件是时间戳索引文件。
 
 ![](https://img2022.cnblogs.com/blog/2591061/202211/2591061-20221114230343330-264829160.png)
 
@@ -721,7 +526,7 @@ Topic 是逻辑上的概念，而 Partition 是物理上的概念，每个 parti
 
 index 文件中并没有为数据文件中的每条消息都建立索引，而是采用了稀疏存储的方式，每隔一定字节的数据建立一条索引。这样避免了索引文件占用过多的空间，从而可以将索引文件保留在内存中，通过内存映射（mmap）直接进行内存映射。但缺点是没有建立索引的 Message 也不能一次定位到其在数据文件的位置，从而需要做一次顺序扫描，但是这次顺序扫描的范围就很小了。
 
-##### segment文件命名规则
+##### Segment 文件命名规则
 Partition 全局的第一个 Segment 从0开始，后续每个 Segment 文件名为上一个全局 Partition 的最大 offset（偏移 Message 数）。数值最大为64位long大小，20位数字字符长度，没有数字就用 0 填充。
 
 通过索引信息可以快速定位到 Message。通过 .index 元数据全部映射到内存，可以避免 Segment File的 IO 磁盘操作；通过索引文件稀疏存储，可以大幅降低 .index 文件元数据占用空间大小。
@@ -731,7 +536,7 @@ Partition 全局的第一个 Segment 从0开始，后续每个 Segment 文件名
 - 优点：就是可以减少索引值的数量。
 - 缺点：找到索引区间之后，要得进行第二次处理。
 
-##### 、Message 的结构
+##### Message 的结构
 
 生产者发送到 Kafka 的消息，都被 Kafka 包装成了 Message。
 
@@ -740,7 +545,95 @@ Partition 全局的第一个 Segment 从0开始，后续每个 Segment 文件名
 每条消息都被包装成上图这个结构，只有最后一个字段才是真正生产者发送的消息数据。
 
 
-### 2.7、消费者 Consumer
+##### 文件清理策略
+
+Kafka 中默认的日志保存时间为7天，可以通过调整如下参数修改保存时间。
+- log.retention.hours，最低优先级小时，默认7天。
+- log.retention.minutes，分钟。 
+- log.retention.ms，最高优先级毫秒。 
+- log.retention.check.interval.ms，负责设置检查周期，默认5分钟。
+
+Kafka 中提供的日志清理策略有 delete 和 compact 两种。 
+- delete日志删除：将过期数据删除。log.cleanup.policy = delete。所有数据启用删除策略。
+  - 基于时间：默认打开。以segment中所有记录中的最大时间戳作为该文件时间戳。
+  - 基于大小：默认关闭。超过设置的所有日志总大小，删除最早的 segment。log.retention.bytes，默认等于-1，表示无穷大。 
+- compact 日志压缩：对于相同 key 的不同 value 值，只保留最后一个版本。log.cleanup.policy=compact 所有数据启用压缩策略。
+
+![](https://img2022.cnblogs.com/blog/2591061/202211/2591061-20221114234826831-894934108.png)
+
+压缩后的 offset 可能是不连续的，比如上图中没有 6，当从这些 offset 消费消息时，将会拿到比这个 offset 大的 offset 对应的消息，实际上会拿到 offset 为7的消息，并从这个位置开始消费。
+
+这种策略只适合特殊场景，比如消息的key是用户ID，value是用户的资料，通过这种压缩策略，整个消息集里就保存了所有用户最新的资料。
+
+
+#### 2.3.6、高效读写数据
+
+1. Kafka是分布式集群，可以采用分区技术，并行度高。
+2. 读数据采用稀疏索引，可以快速定位到要消费的数据。
+3. 顺序写磁盘。
+4. 页缓存 + 零拷贝技术
+
+> 零拷贝：Kafka 的数据加工处理操作交由 Kafka 生产者和 Kafka 消费者处理。Kafka Broker 应用层不关心存储的数据，所以就不用走应用层，传输效率高。
+
+> PageCache 页缓存：Kafka 重度依赖底层操作系统提供的 PageCache 功能。当上层有写操作时，操作系统只是将数据写入PageCache。当读操作发生时，先从 PageCache 中查找，如果找不到，再去磁盘中读取。实际上 PageCache 是把尽可能多的空闲内存都当做了磁盘缓存来使用。
+
+![](https://img2022.cnblogs.com/blog/2591061/202211/2591061-20221115212311764-1676882155.png)
+
+涉及到的两个参数为：
+- log.flush.interval.messages 	强制页缓存刷写到磁盘的条数，默认是long的最大值，9223372036854775807。一般不建议修改，交给系统自己管理。
+- log.flush.interval.ms	每隔多久，刷数据到磁盘，默认是null。一般不建议修改，交给系统自己管理。
+
+#### 2.3.7、Broker 参数
+
+Broker 有一些重要的参数，主要是在 server.properties 配置文件中设置的。这个文件是每个 Kafka Broker 节点的核心配置文件，通常位于 Kafka 安装目录下的 config 目录中，下面详细说明
+
+|基础参数|说明|示例|
+|-|-|-|
+|broker.id|每个 Kafka Broker 的唯一标识符|整数，通常按照顺序分配|
+|listeners|指定 Kafka Broker 启动时监听的协议和端口。|格式为 `protocol://host:port`。如果要配置多个监听器，可以使用逗号分隔，如果使用配置样本启动 Kafka，会监听 9092 端口，例如 `listeners=PLAINTEXT://localhost:9092`|
+|zookeeper connect|用于保存 Broker 元数据的 Zookeeper 地址是通过 zookeeper.connect 来指定的。|如指定 `localhost:2181` 则表示这个 Zookeeper 是运行在本地 2181 端口上的。如通过 `zk1:2181,zk2:2181,zk3:2181` 来指定 zookeeper.connect 的多个参数值。该配置参数是用冒号分割的一组 `hostname:port/path` 列表，其含义如下:<li>`hostname` 是 Zookeeper 服务器的机器名或者 ip 地址；<li>`port` 是 Zookeeper 客户端的端口号;<li>`/path` 是可选择的 Zookeeper 路径，如果不指定默认使用根路径|
+
+
+|性能优化参数|说明|示例|
+|-|-|-|
+|num.network.threads|处理网络请求的线程数（接收客户端请求）。|根据 CPU 核心数和网络负载调整（通常设为 CPU 核心数的 1.5-2 倍）|
+|num.io.threads|负责写磁盘的线程数。整个参数值要占总核数的50%。|默认值：8|
+|num.replica.fetchers|副本从 Leader 同步数据的线程数。|这个参数占总核数的50%的1/3 。|
+|log.flush.interval.messages|累积多少条消息后刷新到磁盘|可靠性要求高时设为较小值（如 10000），但会降低吞吐量。|
+|log.flush.interval.ms|每隔多久，刷数据到磁盘。|默认是null。一般不建议修改，交给系统自己管理。|
+|socket.send.buffer.bytes / socket.receive.buffer.bytes|TCP 发送/接收缓冲区大小（字节）。|网络带宽高时增大（如 1MB）|
+
+|存储管理参数|说明|示例|
+|-|-|-|
+|log.dirs|Kafka 把所有的消息都保存到磁盘上，存放这些日志片段的目录是通过 log.dirs 来制定的，它是用一组逗号来分割的本地系统路径。|log.dirs 是没有默认值的，必须手动指定。比如通过 `/home/kafka1,/home/kafka2,/home/kafka3` 这样来配置这个参数的值|
+|log.retention.hours|日志保留时间（小时）|默认：168 (7天)	根据存储容量和业务需求调整（如 72 小时）。|
+|log.retention.bytes|单个分区的最大日志大小（字节），超过则删除旧数据。|默认等于-1，表示无穷大。结合 log.retention.hours 使用|
+|log.segment.bytes|单个日志段文件的大小（字节）。|默认值：1073741824 (1GB)	增大可减少段文件数量，但延长索引重建时间（建议 1-10GB）。|
+|log.index.interval.bytes|kafka里面每当写入了指定大小的日志（.log），然后就往 index 文件里面记录一个索引。稀疏索引。|默认4kb|
+|log.cleanup.policy |日志清理策略。|默认值：delete。<li>delete：基于时间或大小删除。<li>compact：压缩保留最新键值。<br>需要保留键最新值时设为 compact（如事务日志）。|
+|num.recovery.threads.per.data.dir|以下 3 种情况，Kafka 会使用可配置的线程池来处理日志片段<li>服务器正常启动，用于打开每个分区的日志片段；<li>服务器崩溃后重启，用于检查和截断每个分区的日志片段；<li>服务器正常关闭，用于关闭日志片段。<br>默认情况下，每个日志目录仅使用一个线程。由于这些线程仅在服务器启动和崩溃时使用，所以可以设置大量的线程达到并行操作的目的。这样一旦某个服务器发生崩溃，可以使用并行操作节约时间。|注意配置时的数字对应的是 log.dirs 指定的单个日志目录，即如果 log.dirs 指定了3个路径，num.recovery.threads.per.data.dir 被设为 8，则总共需要 24 个线程。|
+
+
+|高可用和副本参数|说明|示例|
+|-|-|-|
+|default.replication.factor|默认副本数（创建主题时未指定则使用此值）。|默认值：1，生产环境建议 3，确保冗余|
+|min.insync.replicas|最小同步副本数（ISR），影响生产者 acks=all 时的可用性。|默认值：1|
+|unclean.leader.election.enable|是否允许非同步副本（非 ISR）成为 Leader。|默认 false，保持 false，避免数据不一致。|
+|controller.socket.timeout.ms|控制器（Controller）与 Broker 通信的超时时间（毫秒）。|默认值：30000 (30秒)，网络不稳定时适当增大|
+|offsets.topic.replication.factor|__consumer_offsets 主题的副本数。|默认值：3，保持和default.replication.factor 一致。|
+|auto.create.topics.enable|是否允许自动创建 Topic|默认情况下，Kafka 会采用3种方式创建 Topic：<li>当一个生产者开始往主题写入消息时<li>当一个消费者开始从主题读取消息时<li>当任意一个客户端向主题发送元数据请求时<br>auto.create.topics.enable 参数建议设置成 false，即不允许自动创建 Topic|
+
+
+
+
+
+
+
+
+
+
+
+### 2.4、消费者 Consumer
 
 一个正常的消费逻辑需要具备以下几个步骤：
 
@@ -761,7 +654,7 @@ Partition 全局的第一个 Segment 从0开始，后续每个 Segment 文件名
 - 一个主题中的消息被多个消费者群组共同消费，这种消费模式又称为发布-订阅模式
 
 
-#### 消费者组和分区重平衡
+#### 2.4.1、消费者组和分区重平衡
 
 
 一个群组中的消费者订阅的都是相同的主题，每个消费者接收主题一部分分区的消息。
@@ -806,7 +699,7 @@ Kafka 还有个特性，消息只写入一次，每个应用都可以消费到�
 2. 同一个分区下的数据，在同一时刻，不能同一个消费组的不同消费者消费。
 3. 分区数越多，同一时间可以有越多的消费者来进行消费，消费数据的速度就会越快，提高消费的性能。
 
-#### 创建消费者
+#### 2.4.2、 创建消费者
 
 ![](https://img2022.cnblogs.com/blog/2591061/202211/2591061-20221119153827376-699170512.png)
 
@@ -855,7 +748,7 @@ Kafka 生产者产生的消息消费者是不知道的。Consumer 采用的是�
 在退出应用程序之前使用`close()`方法关闭消费者。网络连接和 socket 也会随之关闭，并立即触发一次重平衡，而不是等待群组协调器发现它不再发送心跳并认定它已经死亡。
 
 
-#### 消费者的配置
+#### 2.4.3、消费者的配置
 
 还是和生产者一样，对这些参数进行分类
 
@@ -921,7 +814,7 @@ Kafka 生产者产生的消息消费者是不知道的。Consumer 采用的是�
     max.poll.records=100          # 少量消息快速处理
     heartbeat.interval.ms=1000    # 快速检测失效消费者
 
-#### 提交和偏移量
+#### 2.4.5、提交和偏移量
 
 消费者每次调用 `poll()` 时，消费的是 Kafka 中还没有被消费的记录。要做到这一点，就需要记录上一次消费时的消费位移。这个消费位移必须被持久化保存，而不是内存中，否则消费者重启之后就会无法知晓之前的消费位移。
 
