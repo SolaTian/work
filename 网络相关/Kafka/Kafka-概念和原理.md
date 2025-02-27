@@ -875,10 +875,17 @@ Kafka 中默认的提交方式为自动提交。自动提交由 enable.auto.comm
 
 ![](https://img2022.cnblogs.com/blog/2591061/202211/2591061-20221117235010389-503479062.png)
 
-本笔记参考以下博客：
+
+本笔记参考以下博客进行总结，若有不对或需要补充地方还请指正，下面附上链接
+
+[Kafka 入门一篇文章就够了](https://github.com/crisxuan/bestJavaer/blob/master/kafka/kafka-basic.md#%E7%94%9F%E4%BA%A7%E8%80%85%E5%88%86%E5%8C%BA%E6%9C%BA%E5%88%B6)
+
+[kafka详解](https://www.cnblogs.com/huangdh/p/16886327.html)
 
 [Kafka底层原理剖析](https://cloud.tencent.com/developer/article/1775065)
 
 [Kafka学习之路](https://www.cnblogs.com/qingyunzong/p/9004509.html)
 
 [Kafka原理篇：图解kakfa架构原理](https://www.51cto.com/article/656518.html)
+
+[深入理解Kafka核心设计及原理(1-6)](https://www.cnblogs.com/zjdxr-up/p/16104558.html)
