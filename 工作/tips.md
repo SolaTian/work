@@ -2,6 +2,7 @@
   - [C/C++](#cc)
     - [Static关键字](#static关键字)
     - [volatile 关键字](#volatile-关键字)
+    - [typedef](#typedef)
     - [const 关键字](#const-关键字)
     - [sizeof和strlen](#sizeof和strlen)
     - [常见位操作](#常见位操作)
@@ -95,6 +96,40 @@
 ### volatile 关键字
 
 > 确保每次访问变量时都直接从其内存地址中读取，而不是使用寄存器中的缓存值
+
+### typedef
+
+```c
+typedef 原类型名 新别名;
+//为变量取别名
+typedef unsigned int uint;      // 给 unsigned int 起别名 uint
+typedef long long int64;        // 给 long long 起别名 int64
+//为结构体取别名
+// 方式一：先定义结构体，再用 typedef 起别名
+struct Point {
+    int x;
+    int y;
+};
+typedef struct Point Point;      // 以后 Point 就等价于 struct Point
+
+// 方式二：定义结构体的同时使用 typedef
+typedef struct {
+    int x;
+    int y;
+} Point;                         // 这里 Point 是结构体的别名，可以省略结构体标签
+
+//为指针类型取别名
+typedef int* IntPtr;             // IntPtr 是指向 int 的指针类型
+int a = 10;
+IntPtr p = &a;                // 相当于 int* p = &a;
+
+//为函数指针取别名
+// 定义一个函数类型，该函数接收两个 int 参数，返回 int
+typedef int (*BinaryOp)(int, int);
+BinaryOp op;                  // 声明一个函数指针变量 op
+op = add;
+op(5,3);
+```
 
 ### const 关键字
 
