@@ -644,6 +644,14 @@ TLS加密层握手
 
 ### SNMP
 答：
+>通常涉及网络管理站（NMS） 作为客户端，被管理设备上的Agent 作为服务器。它们通过MIB（管理信息库） 定义的变量进行通信。
+
+主要使用UDP协议，Get和Set使用161端口，Trap和Inform使用162端口。
+
+- Get/GetNext/GetBulk：NMS 向 Agent 请求一个或多个对象的值。
+- Set：NMS 向 Agent 写入值，修改设备配置。
+- Trap/Inform：Agent 主动向 NMS 报告异常或事件（如接口 down）。Trap 无需确认，Inform 需要确认。
+
 - v1：最基础，使用团体字（community string）作为明文密码，无加密
 - v2c：增强了错误码类型（如不再区分 noSuchName 等），但仍使用团体字明文传输，是当前最广泛部署的版本
 - v3：增加了用户安全模型，提供认证（MD5/SHA）和加密（DES/AES），可配置不同的安全级别（noAuthNoPriv、authNoPriv、authPriv）。
