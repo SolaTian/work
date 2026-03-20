@@ -999,22 +999,39 @@ include config.mk
 #多目录的makefile组织
 #大型嵌入式项目中，源代码通常按功能模块划分到不同目录，多目录的 Makefile 组织主要解决两个问题：如何管理跨目录的依赖关系以及如何保持 Makefile 的可维护性
 #有两种，递归式和非递归式
-# 递归 Make	每个子目录有独立的 Makefile，顶层 Makefile 递归调用子目录的 make。	隔离性好，每个模块可独立编译，依赖关系难以传递，并行编译易出错，每个子目录 make 都会重新解析 Makefile，开销大。
-#非递归 Make	只有一个顶层 Makefile，通过 include 包含所有子目录的 Makefile 片段，统一管理所有编译规则。	依赖关系清晰，编译快，支持并行。
-#非递归式
+#递归 Make	每个子目录有独立的 Makefile，顶层 Makefile 递归调用子目录的 make。	隔离性好，每个模块可独立编译，依赖关系难以传递，并行编译易出错，每个子目录 make 都会重新解析 Makefile，开销大。
+#非递归 Make  只有一个顶层 Makefile，它直接掌握项目中所有源文件（无论它们在哪个子目录）的依赖关系。	依赖关系清晰，编译快，支持并行。
 
+#递归式
+#识别：
+# 1. $(MAKE) -C subdir
+# 2. cd subdir && make
+# 3. 循环遍历多个目录调用 make
 project/
-├── Makefile              # 顶层 Makefile
-├── include/              # 公共头文件
+├── Makefile           # 顶层Makefile（递归调用）
 ├── src/
-│   ├── main/
-│   │   └── main.c
-│   ├── moduleA/
-│   │   ├── moduleA.c
-│   │   └── moduleA.h
-│   └── moduleB/
-│       ├── moduleB.c
-│       └── moduleB.h
+│   ├── Makefile       # 子目录Makefile
+│   └── *.c
+├── lib/
+│   ├── Makefile       # 子目录Makefile  
+│   └── *.c
+└── test/
+    ├── Makefile       # 子目录Makefile
+    └── *.c
+
+
+#非递归式
+#识别：
+# 只有一个make
+project/
+project/
+├── Makefile           # 唯一Makefile（非递归）
+├── src/
+│   └── *.c           # 没有子Makefile
+├── lib/
+│   └── *.c
+└── test/
+    └── *.c
 ├── lib/                   # 生成的库文件
 └── obj/                   # 目标文件存放目录
 ```
