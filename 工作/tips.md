@@ -150,6 +150,17 @@ typedef int (*BinaryOp)(int, int);
 BinaryOp op;                  // 声明一个函数指针变量 op
 op = add;
 op(5,3);
+
+//增强代码的可移植性
+// 根据不同的平台，底层定义不同
+#ifdef PLATFORM_A
+    typedef long long int64_t;
+#else
+    typedef __int64 int64_t;  // 某编译器下的64位类型
+#endif
+
+// 上层代码统一使用 int64_t，保证了代码的移植性
+int64_t file_size;
 ```
 
 ### const 关键字
